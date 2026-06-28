@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/metril/ha-glinet/main/logo/logo.png"
+       alt="GL.iNet for Home Assistant" width="320">
+</p>
+
 # GL.iNet Router — Home Assistant Integration
 
 Monitor and control **GL.iNet firmware-4.x routers** (GL-MT3000 "Beryl AX",

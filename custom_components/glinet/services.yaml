@@ -1,0 +1,84 @@
+block_client:
+  name: Block client
+  description: Block or unblock a client device by MAC address.
+  fields:
+    device_id:
+      name: Router
+      description: The GL.iNet router to act on.
+      required: true
+      selector:
+        device:
+          integration: glinet
+    mac:
+      name: MAC address
+      description: The client's MAC address.
+      required: true
+      example: "aa:bb:cc:dd:ee:ff"
+      selector:
+        text:
+    blocked:
+      name: Blocked
+      description: Whether the client should be blocked.
+      required: true
+      selector:
+        boolean:
+
+connect_repeater:
+  name: Connect repeater
+  description: Connect the router (in repeater mode) to an upstream Wi-Fi network.
+  fields:
+    device_id:
+      name: Router
+      description: The GL.iNet router to act on.
+      required: true
+      selector:
+        device:
+          integration: glinet
+    ssid:
+      name: SSID
+      description: The upstream network SSID to join.
+      required: true
+      selector:
+        text:
+    password:
+      name: Password
+      description: The upstream network password (leave blank for open networks).
+      required: false
+      selector:
+        text:
+
+set_wifi:
+  name: Set Wi-Fi
+  description: Update a Wi-Fi interface's SSID, key, or enabled state.
+  fields:
+    device_id:
+      name: Router
+      description: The GL.iNet router to act on.
+      required: true
+      selector:
+        device:
+          integration: glinet
+    iface:
+      name: Interface
+      description: The Wi-Fi interface identifier to modify.
+      required: true
+      selector:
+        text:
+    ssid:
+      name: SSID
+      description: New SSID for the interface.
+      required: false
+      selector:
+        text:
+    key:
+      name: Key
+      description: New password/key for the interface.
+      required: false
+      selector:
+        text:
+    enabled:
+      name: Enabled
+      description: Whether the interface should be enabled.
+      required: false
+      selector:
+        boolean:

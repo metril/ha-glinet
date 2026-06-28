@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to GL.iNet router",
+        "description": "Enter the router's address and admin password.",
+        "data": {
+          "host": "Host",
+          "password": "Admin password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Enter the router's admin password again.",
+        "data": {
+          "password": "Admin password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the router.",
+      "invalid_auth": "Invalid password.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This router is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "GL.iNet options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)",
+          "enable_device_tracker": "Create device trackers for connected clients"
+        }
+      }
+    }
+  }
+}

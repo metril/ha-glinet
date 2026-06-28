@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/metril/ha-glinet/main/logo/logo.png"
+  <img src="https://raw.githubusercontent.com/metril/ha-glinet/main/custom_components/glinet/brand/logo.png"
        alt="GL.iNet for Home Assistant" width="320">
 </p>
 

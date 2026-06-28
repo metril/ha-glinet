@@ -8,3 +8,5 @@ docs/superpowers/
 # Local RPC dumps may contain identifying data (serial, ddns name) — never commit
 glinet_rpc_dump.json
 glinet_vpn_discovery.json
+glinet_write_verify.json
+glinet_vpn_control.json

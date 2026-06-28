@@ -73,9 +73,16 @@ dump). Key real shapes:
   switch for the client yet. `tor.get_status`/`tor.get_config` also exist.)
 - **wg-server** nests status under `server.status`; ovpn-server/tailscale are
   top-level. Tailscale `status:3` is treated as connected (heuristic ≥2).
-- **Write payloads** (`led.set_config`, VPN `start`/`stop`, `wifi.set_config`,
-  `clients.block_client`, `repeater.connect`) use documented method names but the
-  exact params are unconfirmed — verify before trusting the switches/services.
+- **`led.set_config {led_enable: bool}` — VERIFIED** (tools/verify_writes.py): the
+  LED write path works end-to-end (flip + auto-revert confirmed on 4.8.1). The LED
+  switch is trustworthy.
+- VPN client config: `wg-client.get_config_list` / `ovpn-client.get_config_list`
+  require `{group_id: N}` (group 0 was empty on the test router; the configured WG
+  client is `tunnel_id:10`, in another group). `tools/vpn_control.py` scans groups
+  and (with `--start`) confirms the start/stop method via a reversible cycle.
+- **Other write payloads** (VPN start/stop, `wifi.set_config`,
+  `clients.block_client`, `repeater.connect`) use documented method names but exact
+  params are still unconfirmed — verify before trusting those switches/services.
 - **Firmware-update** field (`new_version`) not present in get_status; the update
   entity reports "up to date" until a real check method is found.
 

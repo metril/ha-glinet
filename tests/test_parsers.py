@@ -221,11 +221,27 @@ def test_wifi_config_ifaces_and_payload():
 
 
 def test_firmware_parsers():
-    fw = {"current_version": "4.8.1", "prompt": True}
-    assert parsers.firmware_update_available(fw) is True
-    assert parsers.firmware_current_version(fw) == "4.8.1"
-    assert parsers.firmware_update_available({"prompt": False}) is False
+    # Real "up to date" shape (fw 4.8.1): prompt is true but there is NO
+    # version_new, so no update is available — prompt must NOT drive availability.
+    up_to_date = {
+        "current_version": "4.8.1",
+        "current_type": "release8",
+        "prompt": True,
+    }
+    assert parsers.firmware_current_version(up_to_date) == "4.8.1"
+    assert parsers.firmware_update_available(up_to_date) is False
+    assert parsers.firmware_latest_version(up_to_date) is None
+
+    # When a newer firmware is offered, version_new carries it.
+    offered = {"current_version": "4.8.1", "version_new": "4.9.0", "prompt": True}
+    assert parsers.firmware_update_available(offered) is True
+    assert parsers.firmware_latest_version(offered) == "4.9.0"
+
+    # Cellular variant exposes new_version as a fallback.
+    assert parsers.firmware_latest_version({"new_version": "5.0"}) == "5.0"
+
     assert parsers.firmware_update_available(None) is None
+    assert parsers.firmware_latest_version(None) is None
 
 
 def test_repeater_status_real_shape():

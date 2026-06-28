@@ -119,9 +119,21 @@ a `sid` via `/rpc` and seeding it as the `Admin-Token` cookie (`?id=<sid>`), the
 - **Tor**: `tor.set_config {enable, countries, manual}` (switch; shape live-verified).
 - **Repeater disconnect**: `repeater.disconnect {}` (button). Also seen: `repeater.
   connect`, `set_config`, `enter/exit_bare_mode`, `get_saved_ap_list`, `remove_saved_ap`.
-- **Firmware check**: `upgrade.check_firmware_online {}` → `{current_version, prompt,
-    current_type, current_compile_time}` (`prompt`=update offered) — drives the update
-    entity; polled on a 6h throttle to avoid hammering GL's servers.
+- **Firmware update — FULL CONTRACT (v0.6.0, captured from the UI's /rpc + view JS).**
+  Check: `upgrade.check_firmware_online {}` → `{current_version, current_type,
+    current_compile_time, prompt, version_new?}`, polled on a 6h throttle. ⚠️ **`prompt`
+    is NOT "update available"** — it is `true` even when up to date (verified live on
+    4.8.1, where the UI shows "Firmware is up-to-date"). The real signal is a non-empty
+    **`version_new`** (the offered new version); `parsers.firmware_latest_version` reads
+    `version_new` (cellular variant: `new_version`) and `firmware_update_available` keys
+    off it. **Install** (the update entity's `async_install`):
+    **`upgrade.upgrade_online {keep_config:true, keep_package:true}`** → `{need_reboot_flag?}`;
+    the router downloads the image and reboots to flash it (settings kept), so the
+    integration goes unavailable — we fire-and-return, no progress poll. Progress (if ever
+    needed) is `upgrade.get_online_upgrade_status {}` → `{status, percent}` (status 1=in
+    progress; 2/5/7/9=terminal; 4/6→router redirects to its `process` page). Local-image
+    flash is `upgrade.upgrade_local`; `upgrade.get_config`/`set_config` hold `rc_upgrade`
+    (preview/RC plan opt-in).
 - Other writes seen in the view JS (not yet shipped): `ddns.set_config`,
   `network.set_advance_config`, `firewall.{set_port_forward,set_dmz,add/remove_port_forward}`,
   `clients.set_info`, `cable.set_config`, `tethering.{set_connect,disconnect}`.
@@ -171,8 +183,11 @@ connection). Treat router→ap as the user's deliberate, disruptive action.
   because `set_tunnel`/`get_tunnel` weren't in the probed method list.)
 - **Other write payloads** (`wifi.set_config`, `clients.block_client`,
   `repeater.connect`) use documented method names but exact params are unconfirmed.
-- **Firmware-update** field (`new_version`) not present in get_status; the update
-  entity reports "up to date" until a real check method is found.
+- **Firmware update — RESOLVED (v0.6.0)**: see the full contract above
+  (`check_firmware_online.version_new` for availability, `upgrade.upgrade_online
+  {keep_config, keep_package}` to install). The install path is shipped but **not
+  live-flashed** (would reboot/reflash the router); discovered read-only from the UI's
+  own /rpc + the `gl-sdk4-ui-upgrade`/`-home` view bundles via chrome-devtools.
 
 ## License
 

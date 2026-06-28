@@ -502,14 +502,25 @@ def wifi_iface_value(config: dict[str, Any] | None, iface_name: str, field: str)
 
 
 # --- Firmware update --------------------------------------------------------
-# ``upgrade.check_firmware_online`` → ``{current_version, prompt, current_type,
-# current_compile_time}``; ``prompt`` true = a newer firmware is offered.
+# ``upgrade.check_firmware_online`` → ``{current_version, current_type,
+# current_compile_time, prompt, version_new?}``. The router UI treats a non-empty
+# ``version_new`` (the offered new version string) as "update available" — NOT
+# ``prompt`` (an unrelated auto-check flag that is ``true`` even when up to date,
+# verified live on fw 4.8.1). ``new_version`` is the cellular-firmware variant.
 
-def firmware_update_available(config: dict[str, Any] | None) -> bool | None:
-    """Whether a firmware update is available (``prompt``)."""
+def firmware_latest_version(config: dict[str, Any] | None) -> str | None:
+    """Return the offered new firmware version, or ``None`` if up to date."""
     if not config:
         return None
-    return bool(config.get("prompt"))
+    value = config.get("version_new") or config.get("new_version")
+    return str(value) if value else None
+
+
+def firmware_update_available(config: dict[str, Any] | None) -> bool | None:
+    """Whether a newer firmware is offered (a non-empty ``version_new``)."""
+    if not config:
+        return None
+    return firmware_latest_version(config) is not None
 
 
 def firmware_current_version(config: dict[str, Any] | None) -> str | None:

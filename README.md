@@ -20,7 +20,7 @@ Local polling, UI config flow, no cloud, no third-party Python dependencies.
 | **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
 | **Binary sensors** | Internet, WAN, 2.4/5 GHz & guest Wi-Fi, VPN client, Tailscale, repeater, WAN cable, USB tethering, Dynamic DNS, cellular modem |
 | **Device trackers** | One per connected client (home/away presence) |
-| **Update** | Firmware-available notification (via the router's online check) |
+| **Update** | Firmware — shows when a newer firmware is offered and installs it (one-click online upgrade) |
 | **Services** | `glinet.block_client`, `glinet.scan_repeater`, `glinet.connect_repeater`, `glinet.set_wifi`, `glinet.set_mode` |
 
 Entities for features a given model lacks (e.g. cellular modem, a VPN type that
@@ -63,6 +63,15 @@ handled by the repeater flow below.)
   (SSID + password, plus optional `identity` for WPA-Enterprise and `bssid` to target a
   specific same-named AP). The **Disconnect repeater** button drops the uplink.
 - The **Repeater** binary sensor + upstream SSID / signal / state sensors report status.
+
+### Firmware
+
+The **Firmware** update entity checks GL.iNet's online firmware service (on the config
+refresh interval) and, when a newer firmware is offered, shows the new version and an
+**Install** button. Installing runs the router's online upgrade — it downloads the image
+and **reboots to flash it, keeping your settings**. The router is offline for a few
+minutes and this integration shows unavailable until it returns; the entity catches up on
+the next poll. (Install is only available when an update is actually offered.)
 
 ### Polling
 

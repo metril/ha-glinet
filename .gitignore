@@ -15,3 +15,4 @@ glinet_vpn_control.json
 glinet_methods.json
 glinet_ui_methods.json
 glinet_control_discovery.json
+glinet_upgrade_discovery.json

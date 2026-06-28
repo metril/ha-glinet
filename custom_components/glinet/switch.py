@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -42,15 +42,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class GlinetSwitchDescription:
-    """Describes a GL.iNet switch."""
+class GlinetSwitchDescription(SwitchEntityDescription):
+    """Describes a GL.iNet switch.
 
-    key: str
-    name: str
-    config_key: str  # data["configs"] key gating creation and providing state
-    service: str
-    kind: str  # "vpn" | "led" | "tailscale"
-    icon: str | None = None
+    Subclasses ``SwitchEntityDescription`` (like the sensor/binary_sensor
+    descriptions) so Home Assistant can read ``device_class``/``entity_category``
+    off the assigned ``entity_description`` without crashing. ``key``/``name``/
+    ``icon`` are inherited fields; the added fields below carry our wiring.
+    """
+
+    config_key: str = ""  # data["configs"] key gating creation and providing state
+    service: str = ""
+    kind: str = ""  # "vpn" | "led" | "tailscale" | "tor"
     is_on_fn: Callable[[dict[str, Any] | None], bool | None] = field(
         default=lambda cfg: None
     )
@@ -156,7 +159,7 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, entry)
-        self.entity_description = description  # type: ignore[assignment]
+        self.entity_description = description
         self._desc = description
         self._attr_name = description.name
         self._attr_icon = description.icon

@@ -65,12 +65,27 @@ jobs:
               "custom_components.glinet.update",
           ]
           failed = False
+          loaded = {}
           for m in mods:
               try:
-                  importlib.import_module(m)
+                  loaded[m] = importlib.import_module(m)
                   print(f"OK   {m}")
               except Exception as e:  # noqa: BLE001
                   failed = True
                   print(f"FAIL {m}: {type(e).__name__}: {e}")
+
+          # Any description tuple assigned to entity.entity_description MUST subclass
+          # EntityDescription, or HA crashes reading entity.name -> device_class.
+          from homeassistant.helpers.entity import EntityDescription
+          for m, attr in (
+              ("custom_components.glinet.sensor", "SENSORS"),
+              ("custom_components.glinet.binary_sensor", "BINARY_SENSORS"),
+              ("custom_components.glinet.switch", "SWITCHES"),
+          ):
+              mod = loaded.get(m)
+              for desc in getattr(mod, attr, ()) if mod else ():
+                  if not isinstance(desc, EntityDescription):
+                      failed = True
+                      print(f"FAIL {m}.{attr}: {desc!r} is not an EntityDescription")
           sys.exit(1 if failed else 0)
           PY

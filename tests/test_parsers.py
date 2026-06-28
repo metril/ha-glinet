@@ -106,6 +106,21 @@ def test_vpn_connected_variants():
     assert parsers.vpn_connected({"status": 3, "login_name": "x"}) is True
 
 
+def test_vpn_client_unified():
+    # Real vpn-client.get_status shape from firmware 4.8.1.
+    off = {"mode": 0, "status_list": [{"enabled": False, "name": "Home", "tunnel_id": 10}]}
+    assert parsers.vpn_client_connected(off) is False
+    assert parsers.vpn_client_active_name(off) is None
+
+    on = {"mode": 3, "status_list": [{"enabled": True, "name": "Home", "tunnel_id": 10}]}
+    assert parsers.vpn_client_connected(on) is True
+    assert parsers.vpn_client_active_name(on) == "Home"
+
+    # mode missing -> fall back to enabled flags
+    assert parsers.vpn_client_connected({"status_list": [{"enabled": True}]}) is True
+    assert parsers.vpn_client_connected(None) is None
+
+
 def test_led_enabled():
     assert parsers.led_enabled({"led_enable": True}) is True
     assert parsers.led_enabled({"enable": 0}) is False

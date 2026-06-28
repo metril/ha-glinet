@@ -28,10 +28,8 @@ from .api import GlinetError
 from .const import (
     DOMAIN,
     SVC_LED,
-    SVC_OVPN_CLIENT,
     SVC_OVPN_SERVER,
     SVC_TAILSCALE,
-    SVC_WG_CLIENT,
     SVC_WG_SERVER,
 )
 from .coordinator import GlinetDataUpdateCoordinator
@@ -64,24 +62,6 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
         kind="led",
         icon="mdi:led-on",
         is_on_fn=parsers.led_enabled,
-    ),
-    GlinetSwitchDescription(
-        key="wireguard_client",
-        name="WireGuard Client",
-        config_key="wg_client",
-        service=SVC_WG_CLIENT,
-        kind="vpn",
-        icon="mdi:vpn",
-        is_on_fn=parsers.vpn_connected,
-    ),
-    GlinetSwitchDescription(
-        key="openvpn_client",
-        name="OpenVPN Client",
-        config_key="ovpn_client",
-        service=SVC_OVPN_CLIENT,
-        kind="vpn",
-        icon="mdi:vpn",
-        is_on_fn=parsers.vpn_connected,
     ),
     GlinetSwitchDescription(
         key="wireguard_server",

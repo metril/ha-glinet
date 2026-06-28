@@ -235,6 +235,38 @@ def vpn_tx_bytes(config: dict[str, Any] | None) -> int | None:
         return None
 
 
+def vpn_client_connected(config: dict[str, Any] | None) -> bool | None:
+    """Whether a VPN client is active, from the unified ``vpn-client.get_status``.
+
+    Shape: ``{mode, status_list:[{enabled, name, tunnel_id}]}``. ``mode`` is the
+    active VPN mode (0 = none); a profile's ``enabled`` flags the active one.
+    """
+    if not config:
+        return None
+    mode = config.get("mode")
+    if mode is not None:
+        try:
+            return int(mode) != 0
+        except (TypeError, ValueError):
+            pass
+    status_list = config.get("status_list")
+    if isinstance(status_list, list):
+        return any(bool(e.get("enabled")) for e in status_list if isinstance(e, dict))
+    return None
+
+
+def vpn_client_active_name(config: dict[str, Any] | None) -> str | None:
+    """Return the name of the active (enabled) VPN client profile, if any."""
+    if not config:
+        return None
+    status_list = config.get("status_list")
+    if isinstance(status_list, list):
+        for entry in status_list:
+            if isinstance(entry, dict) and entry.get("enabled"):
+                return entry.get("name")
+    return None
+
+
 def led_enabled(config: dict[str, Any] | None) -> bool | None:
     """Return whether the router LEDs are enabled."""
     if not config:

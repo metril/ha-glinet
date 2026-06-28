@@ -62,9 +62,15 @@ dump). Key real shapes:
 
 ## ⚠️ Still unverified (writes + a few reads)
 
-- **VPN client status**: on 4.8.1, `wg-client.get_status` / `ovpn-client.get_status`
-  return *method not found* (-32601). The probe-and-skip logic hides those entities.
-  The correct client status method/shape is still unknown — needs discovery.
+- **VPN client status — RESOLVED** (via `tools/discover_vpn.py`): the per-protocol
+  `wg-client`/`ovpn-client` `.get_status` don't exist; the unified
+  **`vpn-client.get_status`** is the one. Shape:
+  `{mode, status_list:[{enabled, name, tunnel_id}]}` — `mode != 0` = a client is
+  active, and the `enabled` entry is the active profile. Read-only binary sensor
+  "VPN Client" + diagnostic sensor "VPN Client Profile" use this. (Only `get_status`
+  is confirmed; `wg-client`/`ovpn-client` expose `get_config_list` but it needs a
+  parameter, and vpn-client **start/stop** params are still unknown → no write
+  switch for the client yet. `tor.get_status`/`tor.get_config` also exist.)
 - **wg-server** nests status under `server.status`; ovpn-server/tailscale are
   top-level. Tailscale `status:3` is treated as connected (heuristic ≥2).
 - **Write payloads** (`led.set_config`, VPN `start`/`stop`, `wifi.set_config`,

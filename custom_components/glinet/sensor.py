@@ -94,6 +94,14 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
         icon="mdi:transit-connection-variant",
         value_fn=lambda data: parsers.active_wan_interface(data.get("status", {})),
     ),
+    GlinetSensorDescription(
+        key="vpn_client_profile",
+        name="VPN Client Profile",
+        icon="mdi:vpn",
+        value_fn=lambda data: parsers.vpn_client_active_name(
+            data.get("configs", {}).get("vpn_client")
+        ),
+    ),
 )
 
 

@@ -7,3 +7,4 @@ docs/superpowers/
 .venv/
 # Local RPC dumps may contain identifying data (serial, ddns name) — never commit
 glinet_rpc_dump.json
+glinet_vpn_discovery.json

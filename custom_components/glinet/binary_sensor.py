@@ -65,21 +65,12 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
         value_fn=lambda data: parsers.guest_wifi_up(data.get("status", {})),
     ),
     GlinetBinarySensorDescription(
-        key="wireguard_client",
-        name="WireGuard Client",
+        key="vpn_client",
+        name="VPN Client",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        requires_config="wg_client",
-        value_fn=lambda data: parsers.vpn_connected(
-            data.get("configs", {}).get("wg_client")
-        ),
-    ),
-    GlinetBinarySensorDescription(
-        key="openvpn_client",
-        name="OpenVPN Client",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        requires_config="ovpn_client",
-        value_fn=lambda data: parsers.vpn_connected(
-            data.get("configs", {}).get("ovpn_client")
+        requires_config="vpn_client",
+        value_fn=lambda data: parsers.vpn_client_connected(
+            data.get("configs", {}).get("vpn_client")
         ),
     ),
     GlinetBinarySensorDescription(

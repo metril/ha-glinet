@@ -36,6 +36,8 @@ class GlinetEntity(CoordinatorEntity[GlinetDataUpdateCoordinator]):
         self._entry = entry
         info = coordinator.info
         mac = _first(info, "mac", "factory_mac", "lan_mac")
+        board = info.get("board_info") or {}
+        model = board.get("model") or _first(info, "model", "product", default="GL.iNet Router")
 
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else set()
         self._attr_device_info = DeviceInfo(
@@ -43,7 +45,7 @@ class GlinetEntity(CoordinatorEntity[GlinetDataUpdateCoordinator]):
             connections=connections,
             name=entry.title,
             manufacturer=MANUFACTURER,
-            model=_first(info, "model", "product", default="GL.iNet Router"),
+            model=model,
             sw_version=_first(info, "firmware_version", "version"),
             configuration_url=f"http://{entry.data['host']}",
         )

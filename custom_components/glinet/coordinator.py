@@ -32,13 +32,13 @@ from .const import (
     DATA_INFO,
     DATA_STATUS,
     DEFAULT_SCAN_INTERVAL,
+    SVC_DDNS,
     SVC_LED,
     SVC_OVPN_CLIENT,
     SVC_OVPN_SERVER,
     SVC_TAILSCALE,
     SVC_WG_CLIENT,
     SVC_WG_SERVER,
-    SVC_WIFI,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,8 +47,8 @@ _LOGGER = logging.getLogger(__name__)
 # first refresh; only the ones that succeed are polled afterwards, so models that
 # lack a feature (no modem, no Tailscale, etc.) don't error every cycle.
 _OPTIONAL_READS: tuple[tuple[str, str, str], ...] = (
-    ("wifi", SVC_WIFI, "get_status"),
     ("led", SVC_LED, "get_config"),
+    ("ddns", SVC_DDNS, "get_status"),
     ("wg_client", SVC_WG_CLIENT, "get_status"),
     ("ovpn_client", SVC_OVPN_CLIENT, "get_status"),
     ("wg_server", SVC_WG_SERVER, "get_status"),

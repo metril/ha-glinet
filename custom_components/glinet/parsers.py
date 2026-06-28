@@ -50,7 +50,12 @@ def uptime(status: dict[str, Any]) -> int | None:
 
 def cpu_temperature(status: dict[str, Any]) -> float | None:
     value = first_path(
-        status, "system.cpu_temperature", "cpu.temperature", "cpu_temperature", "temperature"
+        status,
+        "system.cpu.temperature",
+        "system.cpu_temperature",
+        "cpu.temperature",
+        "cpu_temperature",
+        "temperature",
     )
     try:
         return float(value) if value is not None else None
@@ -81,9 +86,11 @@ def memory_used_percent(status: dict[str, Any]) -> float | None:
         "memory.free",
         "memory.available",
     )
+    # buff/cache is reclaimable, so treat it as available for a realistic "used".
+    buff_cache = first_path(status, "system.memory_buff_cache", "memory_buff_cache") or 0
     try:
         total_f = float(total)
-        free_f = float(free)
+        free_f = float(free) + float(buff_cache)
         if total_f <= 0:
             return None
         return round((total_f - free_f) / total_f * 100, 1)
@@ -92,37 +99,51 @@ def memory_used_percent(status: dict[str, Any]) -> float | None:
 
 
 # --- WAN / connectivity -----------------------------------------------------
+# ``system.get_status`` reports ``network`` as a list of interface dicts, each
+# with ``online``/``up`` flags (e.g. wan, wwan, tethering, modem_*). There is no
+# single connectivity flag, so we derive it from that list.
+
+def _network_interfaces(status: dict[str, Any]) -> list[dict[str, Any]]:
+    network = status.get("network")
+    if isinstance(network, list):
+        return [n for n in network if isinstance(n, dict)]
+    if isinstance(network, dict):  # tolerate alternate firmware shape
+        return [v for v in network.values() if isinstance(v, dict)]
+    return []
+
 
 def internet_online(status: dict[str, Any]) -> bool | None:
-    value = first_path(
-        status, "network.online", "online", "internet", "wan.online", "system.online"
-    )
-    if value is None:
+    ifaces = _network_interfaces(status)
+    if not ifaces:
         return None
-    if isinstance(value, str):
-        return value.lower() in ("1", "true", "online", "connected", "yes")
-    return bool(value)
+    return any(bool(n.get("online")) for n in ifaces)
 
 
 def wan_connected(status: dict[str, Any]) -> bool | None:
-    value = first_path(status, "wan.connected", "wan.status", "network.wan.connected")
-    if value is None:
-        return internet_online(status)
-    if isinstance(value, str):
-        return value.lower() in ("1", "true", "connected", "up", "online", "yes")
-    return bool(value)
+    ifaces = _network_interfaces(status)
+    if not ifaces:
+        return None
+    return any(bool(n.get("up")) and bool(n.get("online")) for n in ifaces)
 
 
-def wan_public_ip(status: dict[str, Any]) -> str | None:
-    value = first_path(
-        status, "wan.ip", "wan.ipv4", "ip_public", "public_ip", "network.wan.ip"
-    )
-    return str(value) if value else None
+def active_wan_interface(status: dict[str, Any]) -> str | None:
+    """Return the name of the first online WAN interface."""
+    for iface in _network_interfaces(status):
+        if iface.get("online"):
+            return iface.get("interface")
+    return None
 
 
-def wan_protocol(status: dict[str, Any]) -> str | None:
-    value = first_path(status, "wan.proto", "wan.protocol", "network.wan.proto")
-    return str(value) if value else None
+def wan_public_ip(data: dict[str, Any]) -> str | None:
+    """Return a WAN IP from ddns.get_status (first non-empty interface IP)."""
+    ddns = data.get("configs", {}).get("ddns") or {}
+    ips = ddns.get("ips")
+    if isinstance(ips, list):
+        for entry in ips:
+            ip_list = entry.get("ip") if isinstance(entry, dict) else None
+            if isinstance(ip_list, list) and ip_list:
+                return str(ip_list[0])
+    return None
 
 
 # --- Clients ----------------------------------------------------------------
@@ -155,7 +176,12 @@ def client_mac(client: dict[str, Any]) -> str | None:
 
 
 def client_name(client: dict[str, Any]) -> str | None:
-    return client.get("name") or client.get("hostname") or client.get("ip")
+    return (
+        client.get("alias")
+        or client.get("name")
+        or client.get("hostname")
+        or client.get("ip")
+    )
 
 
 def client_is_online(client: dict[str, Any]) -> bool:
@@ -167,10 +193,14 @@ def client_is_online(client: dict[str, Any]) -> bool:
 # GL.iNet VPN ``get_status`` reports an integer ``status``: 0=stopped, 1=connecting,
 # 2=connected (some firmware uses 1=connected). Treat >=1 with a connected flag as up.
 def vpn_connected(config: dict[str, Any] | None) -> bool | None:
-    """Return whether a VPN service (wg/ovpn/tailscale) is connected."""
+    """Return whether a VPN service (wg/ovpn/tailscale) is connected.
+
+    Handles both top-level ``status`` (ovpn-server, tailscale) and the nested
+    ``server.status`` shape used by wg-server.
+    """
     if not config:
         return None
-    status = first_path(config, "status", "state", "connected", "running", "enable")
+    status = first_path(config, "status", "server.status", "state", "connected", "running", "enable")
     if status is None:
         return None
     if isinstance(status, bool):
@@ -217,34 +247,35 @@ def led_enabled(config: dict[str, Any] | None) -> bool | None:
     return bool(value)
 
 
-def wifi_radio_enabled(wifi: dict[str, Any] | None, band: str) -> bool | None:
-    """Return whether the radio for ``band`` ('2g'/'5g') is enabled.
+def wifi_band_up(status: dict[str, Any], band: str, guest: bool) -> bool | None:
+    """Whether the SSID for a band ('2G'/'5G') and guest flag is up.
 
-    ``wifi`` is the ``wifi.get_status`` payload; its exact shape varies, so this
-    scans any list of interface/radio dicts for one matching the band.
+    Reads the ``wifi`` list from ``system.get_status``, whose entries carry
+    ``band``, ``guest`` and ``up``.
     """
-    if not wifi:
+    wifi = status.get("wifi")
+    if not isinstance(wifi, list):
         return None
-    radios = wifi.get("res") or wifi.get("interfaces") or wifi.get("wifi") or wifi
-    candidates: list[dict[str, Any]] = []
-    if isinstance(radios, list):
-        candidates = [r for r in radios if isinstance(r, dict)]
-    elif isinstance(radios, dict):
-        candidates = [v for v in radios.values() if isinstance(v, dict)]
-    for radio in candidates:
-        name = str(
-            radio.get("band") or radio.get("ifname") or radio.get("name") or ""
-        ).lower()
-        if band == "2g" and ("2" in name or "2.4" in name):
-            return _truthy(radio.get("enabled", radio.get("enable")))
-        if band == "5g" and "5" in name:
-            return _truthy(radio.get("enabled", radio.get("enable")))
-    return None
+    matched = None
+    for entry in wifi:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("band", "")).upper() == band.upper() and bool(
+            entry.get("guest")
+        ) == guest:
+            matched = entry
+            break
+    if matched is None:
+        return None
+    return bool(matched.get("up"))
 
 
-def _truthy(value: Any) -> bool | None:
-    if value is None:
+def guest_wifi_up(status: dict[str, Any]) -> bool | None:
+    """Whether any guest SSID is up."""
+    wifi = status.get("wifi")
+    if not isinstance(wifi, list):
         return None
-    if isinstance(value, str):
-        return value.lower() in ("1", "true", "on", "yes", "up")
-    return bool(value)
+    guest_entries = [e for e in wifi if isinstance(e, dict) and e.get("guest")]
+    if not guest_entries:
+        return None
+    return any(bool(e.get("up")) for e in guest_entries)

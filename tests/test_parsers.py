@@ -10,28 +10,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from custom_components.glinet import parsers
 
 
-def test_system_sensors_nested():
+def test_system_sensors_real_shape():
+    # Mirrors firmware 4.8.1 system.get_status.system from a real GL-MT3000.
     status = {
         "system": {
-            "uptime": 12345,
-            "cpu_temperature": 47.5,
-            "load_average": [0.25, 0.1, 0.05],
-            "memory_total": 1000,
-            "memory_available": 250,
+            "uptime": 10053.55,
+            "cpu": {"temperature": 63},
+            "load_average": [0.03, 0.03, 0],
+            "memory_total": 503181312,
+            "memory_free": 117669888,
+            "memory_buff_cache": 133885952,
         }
     }
-    assert parsers.uptime(status) == 12345
-    assert parsers.cpu_temperature(status) == 47.5
-    assert parsers.load_average(status) == 0.25
-    assert parsers.memory_used_percent(status) == 75.0
+    assert parsers.uptime(status) == 10053
+    assert parsers.cpu_temperature(status) == 63.0
+    assert parsers.load_average(status) == 0.03
+    # (total - free - buff_cache) / total
+    assert parsers.memory_used_percent(status) == 50.0
 
 
-def test_system_sensors_flat():
-    status = {"uptime": "60", "temperature": 40, "load": 1.5, "memory_total": 4, "memory_free": 1}
-    assert parsers.uptime(status) == 60
-    assert parsers.cpu_temperature(status) == 40.0
-    assert parsers.load_average(status) == 1.5
-    assert parsers.memory_used_percent(status) == 75.0
+def test_cpu_temperature_alt_paths():
+    assert parsers.cpu_temperature({"system": {"cpu_temperature": 47.5}}) == 47.5
+    assert parsers.cpu_temperature({"temperature": 40}) == 40.0
 
 
 def test_missing_fields_return_none():
@@ -40,32 +40,54 @@ def test_missing_fields_return_none():
     assert parsers.memory_used_percent({"memory_total": 0, "memory_free": 0}) is None
 
 
-def test_internet_and_wan():
-    assert parsers.internet_online({"network": {"online": True}}) is True
-    assert parsers.internet_online({"online": "connected"}) is True
-    assert parsers.internet_online({"online": 0}) is False
+# network is a LIST of interface dicts on real firmware.
+NETWORK = {
+    "network": [
+        {"interface": "wan", "online": False, "up": False},
+        {"interface": "wwan", "online": True, "up": True},
+        {"interface": "tethering", "online": False, "up": False},
+    ]
+}
+
+
+def test_internet_and_wan_from_interface_list():
+    assert parsers.internet_online(NETWORK) is True
+    assert parsers.wan_connected(NETWORK) is True
+    assert parsers.active_wan_interface(NETWORK) == "wwan"
+    # all offline
+    offline = {"network": [{"interface": "wan", "online": False, "up": False}]}
+    assert parsers.internet_online(offline) is False
+    assert parsers.active_wan_interface(offline) is None
     assert parsers.internet_online({}) is None
-    # wan_connected falls back to internet when no explicit wan flag
-    assert parsers.wan_connected({"online": 1}) is True
 
 
-def test_wan_ip_and_protocol():
-    status = {"wan": {"ip": "1.2.3.4", "proto": "dhcp"}}
-    assert parsers.wan_public_ip(status) == "1.2.3.4"
-    assert parsers.wan_protocol(status) == "dhcp"
+def test_wan_public_ip_from_ddns():
+    data = {
+        "configs": {
+            "ddns": {
+                "ips": [
+                    {"interface": "wan6", "ip": []},
+                    {"interface": "wwan", "ip": ["203.0.113.7"]},
+                ]
+            }
+        }
+    }
+    assert parsers.wan_public_ip(data) == "203.0.113.7"
+    assert parsers.wan_public_ip({"configs": {}}) is None
 
 
 def test_client_count_and_fields():
     data = {
         "clients": [
-            {"mac": "AA:BB", "online": True, "name": "phone", "ip": "192.168.8.2"},
+            {"mac": "AA:BB", "online": True, "alias": "poseidon", "ip": "192.168.8.2"},
             {"mac": "CC:DD", "online": False, "name": "laptop"},
         ]
     }
     assert parsers.client_count(data) == 1  # only online counted when some online
     c = data["clients"][0]
     assert parsers.client_mac(c) == "aa:bb"
-    assert parsers.client_name(c) == "phone"
+    assert parsers.client_name(c) == "poseidon"  # alias preferred
+    assert parsers.client_name(data["clients"][1]) == "laptop"
     assert parsers.client_is_online(c) is True
     assert parsers.client_is_online(data["clients"][1]) is False
 
@@ -77,6 +99,11 @@ def test_vpn_connected_variants():
     assert parsers.vpn_connected({"connected": True}) is True
     assert parsers.vpn_connected({"status": "running"}) is True
     assert parsers.vpn_connected(None) is None
+    # wg-server nests status under "server"
+    assert parsers.vpn_connected({"server": {"status": 0}, "peers": []}) is False
+    assert parsers.vpn_connected({"server": {"status": 2}, "peers": []}) is True
+    # tailscale running
+    assert parsers.vpn_connected({"status": 3, "login_name": "x"}) is True
 
 
 def test_led_enabled():
@@ -85,8 +112,18 @@ def test_led_enabled():
     assert parsers.led_enabled(None) is None
 
 
-def test_wifi_radio_enabled():
-    wifi = {"res": [{"band": "2g", "enabled": True}, {"band": "5g", "enabled": False}]}
-    assert parsers.wifi_radio_enabled(wifi, "2g") is True
-    assert parsers.wifi_radio_enabled(wifi, "5g") is False
-    assert parsers.wifi_radio_enabled(None, "2g") is None
+def test_wifi_band_and_guest():
+    # Mirrors system.get_status.wifi from a real GL-MT3000.
+    status = {
+        "wifi": [
+            {"band": "2G", "guest": False, "up": True},
+            {"band": "5G", "guest": False, "up": False},
+            {"band": "2G", "guest": True, "up": False},
+            {"band": "5G", "guest": True, "up": True},
+        ]
+    }
+    assert parsers.wifi_band_up(status, "2G", False) is True
+    assert parsers.wifi_band_up(status, "5G", False) is False
+    assert parsers.guest_wifi_up(status) is True
+    assert parsers.wifi_band_up({}, "2G", False) is None
+    assert parsers.guest_wifi_up({"wifi": [{"band": "2G", "guest": False, "up": True}]}) is None

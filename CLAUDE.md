@@ -39,22 +39,39 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
    **VPN services are hyphenated on the wire**: `wg-client`, `ovpn-client`,
    `wg-server`, `ovpn-server`.
 
-## ⚠️ Needs verification on a live router
+## Verified against a real GL-MT3000 (firmware 4.8.1)
 
-The GL.iNet 4.x API docs are intermittently offline, so exact JSON field layouts
-and some write payloads are best-effort. When testing against a real router, verify
-and adjust in `parsers.py` / `switch.py` / `services.py`:
+Read paths confirmed against a live router (`tools/dump_rpc.py` produces a redacted
+dump). Key real shapes:
 
-- `system.get_status` field paths: cpu temp, load, memory, uptime, WAN ip/proto,
-  internet/wan online flags.
-- VPN `get_status` shape: the `status` int semantics (1 vs 2 = connected) and the
-  `start` params (group_id/peer_id/client_id).
-- `wifi.set_config` / `led.set_config` payload shape.
-- Firmware-update field (`new_version`) and `tailscale.get_status` keys.
-- Whether `hash-method` actually appears on the user's firmware (4.8+).
+- Auth: `alg=1` (md5_crypt cipher), **`hash-method=sha256`** (outer hash). The
+  client honors `hash-method`, so this works.
+- `system.get_status.system`: `uptime`, `cpu.temperature` (nested!), `load_average[]`,
+  `memory_total`/`memory_free`/`memory_buff_cache`. Memory-used subtracts buff/cache.
+- `system.get_status.network` is a **list** of interface dicts (`interface`,
+  `online`, `up`) — connectivity is derived by scanning it (active iface = first
+  online; e.g. `wwan` in repeater mode).
+- `system.get_status.wifi` is a list of `{band, guest, up}` — drives the WiFi
+  binary sensors.
+- WAN IP comes from `ddns.get_status.ips[].ip[]`, not `system.get_status`.
+- `clients.get_list` → `{clients:[{mac, alias, name, ip, online, iface, total_rx/tx}]}`;
+  `alias` preferred for the display name.
+- `system.get_info`: `board_info.model` = "GL.iNet GL-MT3000", `firmware_version`,
+  top-level `mac`, `hardware_feature`/`software_feature` dicts.
+- LED: `led.get_config` → `{led_enable}`.
 
-Tip: hit `/rpc` with curl after logging in, or use python-glinet's
-`api_description.json` (GPL — reference only, do not vendor) to confirm shapes.
+## ⚠️ Still unverified (writes + a few reads)
+
+- **VPN client status**: on 4.8.1, `wg-client.get_status` / `ovpn-client.get_status`
+  return *method not found* (-32601). The probe-and-skip logic hides those entities.
+  The correct client status method/shape is still unknown — needs discovery.
+- **wg-server** nests status under `server.status`; ovpn-server/tailscale are
+  top-level. Tailscale `status:3` is treated as connected (heuristic ≥2).
+- **Write payloads** (`led.set_config`, VPN `start`/`stop`, `wifi.set_config`,
+  `clients.block_client`, `repeater.connect`) use documented method names but the
+  exact params are unconfirmed — verify before trusting the switches/services.
+- **Firmware-update** field (`new_version`) not present in get_status; the update
+  entity reports "up to date" until a real check method is found.
 
 ## License
 

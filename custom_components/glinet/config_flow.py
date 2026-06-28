@@ -44,6 +44,9 @@ async def _validate(hass, host: str, password: str) -> dict[str, Any]:
 
 def _title_from_info(info: dict[str, Any], host: str) -> str:
     """Build an entry title from device info."""
+    board_model = (info.get("board_info") or {}).get("model")
+    if board_model:  # e.g. "GL.iNet GL-MT3000"
+        return board_model
     model = info.get("model") or info.get("product")
     if model:
         return f"{MANUFACTURER} {model}"

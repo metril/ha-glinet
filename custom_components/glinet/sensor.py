@@ -83,16 +83,16 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="wan_public_ip",
-        name="WAN Public IP",
+        name="WAN IP",
         icon="mdi:ip-network",
-        value_fn=lambda data: parsers.wan_public_ip(data.get("status", {})),
+        value_fn=parsers.wan_public_ip,
     ),
     GlinetSensorDescription(
-        key="wan_protocol",
-        name="WAN Protocol",
+        key="wan_interface",
+        name="WAN Interface",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:transit-connection-variant",
-        value_fn=lambda data: parsers.wan_protocol(data.get("status", {})),
+        value_fn=lambda data: parsers.active_wan_interface(data.get("status", {})),
     ),
 )
 

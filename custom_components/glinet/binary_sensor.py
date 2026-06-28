@@ -44,6 +44,27 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
         value_fn=lambda data: parsers.wan_connected(data.get("status", {})),
     ),
     GlinetBinarySensorDescription(
+        key="wifi_2g",
+        name="2.4 GHz Wi-Fi",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:wifi",
+        value_fn=lambda data: parsers.wifi_band_up(data.get("status", {}), "2G", False),
+    ),
+    GlinetBinarySensorDescription(
+        key="wifi_5g",
+        name="5 GHz Wi-Fi",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:wifi",
+        value_fn=lambda data: parsers.wifi_band_up(data.get("status", {}), "5G", False),
+    ),
+    GlinetBinarySensorDescription(
+        key="guest_wifi",
+        name="Guest Wi-Fi",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:wifi-lock",
+        value_fn=lambda data: parsers.guest_wifi_up(data.get("status", {})),
+    ),
+    GlinetBinarySensorDescription(
         key="wireguard_client",
         name="WireGuard Client",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,

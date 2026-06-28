@@ -286,14 +286,37 @@ def test_repeater_saved_networks():
         "res": [
             {"ssid": "HomeWifi", "macaddr": {"mode": "clone"}, "protocol": "dhcp"},
             {"ssid": "OfficeWifi", "protocol": "dhcp"},
-            {"ssid": "HomeWifi"},  # duplicate dropped
             {"protocol": "dhcp"},  # no ssid -> skipped
         ]
     }
     saved = parsers.repeater_saved_networks(cfg)
+    # full entries are preserved (so the exact saved network can be rejoined)
     assert [n["ssid"] for n in saved] == ["HomeWifi", "OfficeWifi"]
+    assert saved[0]["protocol"] == "dhcp"
     assert parsers.repeater_saved_networks(None) == []
     assert parsers.repeater_saved_networks({"res": "nope"}) == []
+
+
+def test_repeater_saved_option_map():
+    # Unique SSIDs -> labels are just the SSID.
+    uniq = {"res": [{"ssid": "Home"}, {"ssid": "Office"}]}
+    assert list(parsers.repeater_saved_option_map(uniq)) == ["Home", "Office"]
+
+    # Same name -> disambiguated by stored config (protocol, else clone MAC, else index).
+    dup = {
+        "res": [
+            {"ssid": "MyWifi", "protocol": "dhcp"},
+            {"ssid": "MyWifi", "protocol": "static"},
+            {"ssid": "MyWifi", "macaddr": {"macaddr": "aa:bb:cc:dd:ee:ff"}},
+        ]
+    }
+    labels = parsers.repeater_saved_option_map(dup)
+    # every option is unique, and each maps back to its full entry
+    assert len(labels) == 3
+    assert "MyWifi (dhcp)" in labels
+    assert "MyWifi (static)" in labels
+    assert labels["MyWifi (dhcp)"]["protocol"] == "dhcp"
+    assert parsers.repeater_saved_option_map(None) == {}
 
 
 def test_cable_tethering_tor_ddns():

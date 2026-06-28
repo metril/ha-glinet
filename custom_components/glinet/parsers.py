@@ -571,27 +571,62 @@ def repeater_state(config: dict[str, Any] | None) -> str | None:
 
 
 def repeater_saved_networks(config: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Return saved upstream networks from ``repeater.get_saved_ap_list``.
+    """Return the full saved upstream networks from ``repeater.get_saved_ap_list``.
 
-    Each entry carries at least ``ssid`` (the router keeps the key, so reconnecting
-    needs only the SSID). Shape: ``{res:[{ssid, macaddr, protocol, ...}]}``.
+    Each entry: ``{ssid, manual, auto_portal, disguise, macaddr:{...}, protocol}`` (the
+    router keeps the key, so reconnecting passes the saved config — no password). The
+    full entry is preserved so the exact (possibly same-named) network can be rejoined.
     """
     if not config:
         return []
     entries = config.get("res") if isinstance(config, dict) else config
     if not isinstance(entries, list):
         return []
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        ssid = entry.get("ssid")
-        if not ssid or ssid in seen:
-            continue
-        seen.add(ssid)
-        out.append({"ssid": ssid})
-    return out
+    return [e for e in entries if isinstance(e, dict) and e.get("ssid")]
+
+
+def _saved_network_discriminator(entry: dict[str, Any]) -> str | None:
+    """Pick a human-ish differentiator from a saved entry's stored config.
+
+    Saved entries carry no BSSID/band, so the best available distinguisher is the
+    protocol, then the cloned MAC, then nothing (caller falls back to an index).
+    """
+    protocol = entry.get("protocol")
+    if protocol:
+        return str(protocol)
+    macaddr = entry.get("macaddr")
+    if isinstance(macaddr, dict) and macaddr.get("macaddr"):
+        return str(macaddr["macaddr"])
+    return None
+
+
+def repeater_saved_option_map(config: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Map a unique display label -> full saved entry for the repeater select.
+
+    Label is the SSID; when SSIDs collide it is disambiguated with the entry's stored
+    config (protocol / cloned MAC, else a 1-based index), so same-named saved networks
+    can be told apart and the right one is reconnected.
+    """
+    saved = repeater_saved_networks(config)
+    counts: dict[str, int] = {}
+    for entry in saved:
+        counts[entry["ssid"]] = counts.get(entry["ssid"], 0) + 1
+
+    labels: dict[str, dict[str, Any]] = {}
+    seen: dict[str, int] = {}
+    for entry in saved:
+        ssid = entry["ssid"]
+        if counts[ssid] == 1:
+            label = ssid
+        else:
+            seen[ssid] = seen.get(ssid, 0) + 1
+            disc = _saved_network_discriminator(entry) or f"#{seen[ssid]}"
+            label = f"{ssid} ({disc})"
+        # Guard against a disc collision by suffixing an index if needed.
+        if label in labels:
+            label = f"{label} #{seen.get(ssid, 1)}"
+        labels[label] = entry
+    return labels
 
 
 def repeater_scan_networks(result: dict[str, Any] | None) -> list[dict[str, Any]]:

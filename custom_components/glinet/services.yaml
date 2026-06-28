@@ -52,6 +52,15 @@ connect_repeater:
       required: false
       selector:
         text:
+    bssid:
+      name: BSSID
+      description: >-
+        Target a specific access point by BSSID (from a scan_repeater result) when
+        several nearby networks share the same SSID. Leave blank otherwise.
+      required: false
+      example: "aa:bb:cc:dd:ee:ff"
+      selector:
+        text:
 
 scan_repeater:
   name: Scan for repeater networks
@@ -89,10 +98,16 @@ set_mode:
           options:
             - router
             - ap
+    confirm:
+      name: Confirm
+      description: Must be true to proceed — guards against accidental mode changes.
+      required: true
+      selector:
+        boolean:
 
 set_wifi:
   name: Set Wi-Fi
-  description: Update a Wi-Fi interface's SSID, password, or enabled state.
+  description: Update a Wi-Fi interface's SSID, password, security, or enabled state.
   fields:
     device_id:
       name: Router
@@ -120,6 +135,26 @@ set_wifi:
       required: false
       selector:
         text:
+    encryption:
+      name: Security
+      description: >-
+        Wi-Fi security mode. none = open; psk2 = WPA2-PSK; sae = WPA3-SAE;
+        psk-mixed = WPA2/WPA3; sae-mixed = WPA3/WPA2 transition.
+      required: false
+      selector:
+        select:
+          options:
+            - none
+            - psk2
+            - psk-mixed
+            - sae
+            - sae-mixed
+    hidden:
+      name: Hidden
+      description: Whether to hide the SSID.
+      required: false
+      selector:
+        boolean:
     enabled:
       name: Enabled
       description: Whether the interface should be enabled.

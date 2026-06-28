@@ -191,12 +191,9 @@ async def async_setup_entry(
             return False
         return True
 
-    entities: list[SensorEntity] = [
+    async_add_entities(
         GlinetSensor(coordinator, entry, desc) for desc in SENSORS if _included(desc)
-    ]
-    if "repeater" in configs:
-        entities.append(GlinetRepeaterScanSensor(coordinator, entry))
-    async_add_entities(entities)
+    )
 
 
 class GlinetSensor(GlinetEntity, SensorEntity):
@@ -221,40 +218,3 @@ class GlinetSensor(GlinetEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
-
-
-class GlinetRepeaterScanSensor(GlinetEntity, SensorEntity):
-    """Latest on-demand repeater scan: count + the networks list in attributes.
-
-    Populated by the "Scan Repeater Networks" button (scanning isn't polled). The
-    ``networks`` attribute holds ssid/bssid/band/channel/signal/encrypted/saved.
-    """
-
-    _attr_name = "Repeater Scan"
-    _attr_icon = "mdi:wifi-marker"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_native_unit_of_measurement = "networks"
-
-    def __init__(
-        self,
-        coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
-        """Initialize the repeater-scan sensor."""
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_repeater_scan"
-
-    def _networks(self) -> list[dict[str, Any]]:
-        return parsers.repeater_scan_networks(self.coordinator.repeater_scan)
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of networks found in the last scan."""
-        if self.coordinator.repeater_scan is None:
-            return None
-        return len(self._networks())
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the scanned networks list."""
-        return {"networks": self._networks()}

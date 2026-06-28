@@ -26,8 +26,6 @@ DEFAULT_CONFIG_SCAN_INTERVAL: Final = 300
 MIN_CONFIG_SCAN_INTERVAL: Final = 60
 MAX_CONFIG_SCAN_INTERVAL: Final = 3600
 DEFAULT_HTTP_TIMEOUT: Final = 10
-# How long the "Mode Change Armed" switch stays armed before auto-disarming (s).
-MODE_ARM_TIMEOUT: Final = 30
 
 # JSON-RPC services (the wire name; note VPN services are hyphenated)
 SVC_SYSTEM: Final = "system"

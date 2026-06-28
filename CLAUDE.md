@@ -23,24 +23,31 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - `parsers.py` — **all field extraction lives here**, each via candidate dotted
   paths with fallbacks. This is the one place to adjust if a field path differs on
   a given router/firmware.
-- Platforms: `sensor`, `binary_sensor`, `select` (VPN chooser, operating mode, repeater
-  network), `switch`, `text` (Wi-Fi SSID/password), `button`, `device_tracker`, `update`.
-  Services in `services.py`: `block_client`, `scan_repeater` (`SupportsResponse.ONLY`),
-  `connect_repeater`, `set_mode`, `set_wifi` (device-scoped).
+- Platforms: `sensor`, `binary_sensor`, `select` (VPN chooser, repeater network),
+  `switch`, `button`, `device_tracker`, `update`. **Design principle (v0.5.0): simple
+  frequent actions are entities; complex/rare config is services.** Services in
+  `services.py`: `block_client`, `scan_repeater` (`SupportsResponse.ONLY`),
+  `connect_repeater` (ssid/password/identity/bssid), `set_wifi` (iface_name + ssid/key/
+  **encryption**/hidden/enabled), `set_mode` (mode + **confirm:true**).
 - **Polling is tiered** (v0.4.0): `_FAST_READS` every cycle (dynamic status);
-  `_CONFIG_READS` on `CONF_CONFIG_SCAN_INTERVAL` (default 300s — wifi_config, netmode,
-  led, tor, ddns_config, repeater_saved); `_SLOW_READS` fixed 6h (firmware). Write paths
-  call `coordinator.invalidate(key)` so an edit re-reads immediately. The coordinator
-  also holds non-router UI state: `vpn_target`, `mode_armed` (+ `arm_mode`/`disarm_mode`
-  with an `async_call_later` auto-disarm), and `repeater_scan` (set by the scan button).
+  `_CONFIG_READS` on `CONF_CONFIG_SCAN_INTERVAL` (default 300s — led, ddns_config, tor,
+  netmode, repeater_saved); `_SLOW_READS` fixed 6h (firmware). Write paths call
+  `coordinator.invalidate(key)` so an edit re-reads immediately. Coordinator also holds
+  `vpn_target` (the VPN select's chosen profile).
 - **VPN** = one `select` (which profile → `coordinator.vpn_target`) + one `switch`
-  (on/off, enforces single-active). Per-tunnel switches were removed in v0.4.0.
-- **Operating-mode select is arm-gated**: refuses unless `coordinator.mode_armed`
-  (set by the "Mode Change Armed" switch); disarms on success. `set_mode` service is the
-  unguarded automation path. `netmode.set_mode {mode:"router"|"ap"}`.
-- **Repeater network select**: options = "Disconnected" + saved SSIDs
-  (`repeater.get_saved_ap_list` → `parsers.repeater_saved_networks`); connect via
-  `repeater.connect {ssid, remember:true}` (saved nets need no key).
+  (on/off, enforces single-active). Per-tunnel switches removed in v0.4.0.
+- **Operating mode is service-only** (v0.5.0): `glinet.set_mode {mode, confirm:true}` →
+  `netmode.set_mode`; refuses without `confirm`. Read-only Operating Mode sensor remains.
+  (The v0.4.0 mode select + "Mode Change Armed" switch were removed.)
+- **Wi-Fi config is service-only** (v0.5.0): the SSID/password `text` entities were
+  removed; `glinet.set_wifi` handles ssid/key/encryption/hidden via `wifi.set_config`
+  (full-config echo, `parsers.wifi_set_payload`). Per-radio on/off **switches** remain.
+- **Repeater network select** (saved only): `parsers.repeater_saved_option_map` builds
+  unique labels (SSID, disambiguated by stored `protocol`/clone-MAC/index when names
+  collide) → full saved entry; connect = `repeater.connect {**saved_entry, remember:true}`
+  (verified live — saved entry is `{ssid, manual, auto_portal, disguise, macaddr, protocol}`).
+  Scanning/new-network connects stay services (the v0.4.0 scan button + scan sensor were
+  removed).
 
 ## Auth flow (firmware 4.x)
 

@@ -19,7 +19,6 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -124,9 +123,6 @@ async def async_setup_entry(
     # One on/off VPN switch (the VPN-client select chooses which profile it acts on).
     if "vpn_client" in configs:
         entities.append(GlinetVpnSwitch(coordinator, entry))
-    # A local "armed" gate for the disruptive operating-mode change.
-    if "netmode" in configs:
-        entities.append(GlinetModeArmSwitch(coordinator, entry))
     async_add_entities(entities)
 
     # Dynamic Wi-Fi radio switches, one per iface reported in system.get_status.wifi.
@@ -308,39 +304,6 @@ class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
         await self.coordinator.async_request_refresh()
 
 
-class GlinetModeArmSwitch(GlinetEntity, SwitchEntity):
-    """Local safety gate for the operating-mode change (no RPC).
-
-    Turn it on to allow the Operating Mode select to act; it auto-disarms after a
-    short timeout or once a mode change succeeds, so a Router↔AP switch can't be
-    triggered by accident.
-    """
-
-    _attr_icon = "mdi:shield-lock-outline"
-    _attr_name = "Mode Change Armed"
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(
-        self,
-        coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
-        """Initialize the mode-arm switch."""
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_mode_armed"
-
-    @property
-    def is_on(self) -> bool:
-        """Return whether a mode change is currently armed."""
-        return self.coordinator.mode_armed
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Arm the mode change (auto-disarms after a timeout)."""
-        self.coordinator.arm_mode()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disarm the mode change."""
-        self.coordinator.disarm_mode()
 
 
 _BAND_LABEL = {"2G": "2.4 GHz", "5G": "5 GHz", "6G": "6 GHz"}

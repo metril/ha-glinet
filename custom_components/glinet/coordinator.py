@@ -13,9 +13,8 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -35,7 +34,6 @@ from .const import (
     DATA_STATUS,
     DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
-    MODE_ARM_TIMEOUT,
     SVC_CABLE,
     SVC_DDNS,
     SVC_LED,
@@ -49,7 +47,6 @@ from .const import (
     SVC_UPGRADE,
     SVC_VPN_CLIENT,
     SVC_WG_SERVER,
-    SVC_WIFI,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,7 +74,6 @@ _CONFIG_READS: tuple[tuple[str, str, str], ...] = (
     ("led", SVC_LED, "get_config"),
     ("ddns_config", SVC_DDNS, "get_config"),
     ("tor", SVC_TOR, "get_config"),
-    ("wifi_config", SVC_WIFI, "get_config"),
     ("netmode", SVC_NETMODE, "get_mode"),
     ("repeater_saved", SVC_REPEATER, "get_saved_ap_list"),
 )
@@ -133,12 +129,8 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._slow_cache: dict[str, Any] = {}
         self._slow_last: dict[str, float] = {}
 
-        # Shared UI state (not from the router): the chosen VPN target, whether a
-        # mode change is "armed", and the last on-demand repeater scan result.
+        # Shared UI state (not from the router): the chosen VPN target.
         self.vpn_target: Any = None
-        self.mode_armed: bool = False
-        self.repeater_scan: dict[str, Any] | None = None
-        self._arm_unsub: Any = None
 
         super().__init__(
             hass,
@@ -155,31 +147,6 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         for key in keys:
             self._slow_last.pop(key, None)
-
-    @callback
-    def arm_mode(self) -> None:
-        """Arm the operating-mode switch; auto-disarm after ``MODE_ARM_TIMEOUT``."""
-        if self._arm_unsub is not None:
-            self._arm_unsub()
-        self.mode_armed = True
-
-        @callback
-        def _auto_disarm(_now: Any) -> None:
-            self._arm_unsub = None
-            self.disarm_mode()
-
-        self._arm_unsub = async_call_later(self.hass, MODE_ARM_TIMEOUT, _auto_disarm)
-        self.async_update_listeners()
-
-    @callback
-    def disarm_mode(self) -> None:
-        """Disarm the operating-mode switch and cancel any pending auto-disarm."""
-        if self._arm_unsub is not None:
-            self._arm_unsub()
-            self._arm_unsub = None
-        if self.mode_armed:
-            self.mode_armed = False
-            self.async_update_listeners()
 
     @property
     def info(self) -> dict[str, Any]:

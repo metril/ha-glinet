@@ -50,6 +50,7 @@ CONNECT_REPEATER_SCHEMA = vol.Schema(
         vol.Required("ssid"): cv.string,
         vol.Optional("password", default=""): cv.string,
         vol.Optional("identity", default=""): cv.string,
+        vol.Optional("bssid", default=""): cv.string,
     }
 )
 
@@ -63,8 +64,12 @@ SET_MODE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
         vol.Required("mode"): vol.In(["router", "ap"]),
+        vol.Required("confirm"): cv.boolean,
     }
 )
+
+# GL.iNet Wi-Fi security values (WPA2-PSK, WPA3-SAE, mixed, open).
+WIFI_ENCRYPTIONS = ["none", "psk2", "psk-mixed", "sae", "sae-mixed"]
 
 SET_WIFI_SCHEMA = vol.Schema(
     {
@@ -72,6 +77,8 @@ SET_WIFI_SCHEMA = vol.Schema(
         vol.Required("iface_name"): cv.string,
         vol.Optional("ssid"): cv.string,
         vol.Optional("key"): cv.string,
+        vol.Optional("encryption"): vol.In(WIFI_ENCRYPTIONS),
+        vol.Optional("hidden"): cv.boolean,
         vol.Optional("enabled"): cv.boolean,
     }
 )
@@ -112,12 +119,19 @@ def async_register_services(hass: HomeAssistant) -> None:
             params["key"] = call.data["password"]
         if call.data.get("identity"):  # WPA-Enterprise username
             params["identity"] = call.data["identity"]
+        if call.data.get("bssid"):  # target a specific same-named AP
+            params["bssid"] = call.data["bssid"]
         try:
             await client.call(SVC_REPEATER, "connect", params)
         except GlinetError as err:
             raise HomeAssistantError(str(err)) from err
 
     async def _handle_set_mode(call: ServiceCall) -> None:
+        if not call.data.get("confirm"):
+            raise HomeAssistantError(
+                "Refusing to change operating mode without confirm: true "
+                "(switching mode is disruptive and can change the router's IP)."
+            )
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
         try:
             await client.call(SVC_NETMODE, "set_mode", {"mode": call.data["mode"]})
@@ -136,7 +150,11 @@ def async_register_services(hass: HomeAssistant) -> None:
     async def _handle_set_wifi(call: ServiceCall) -> None:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
         iface_name = call.data["iface_name"]
-        overrides = {k: call.data[k] for k in ("ssid", "key", "enabled") if k in call.data}
+        overrides = {
+            k: call.data[k]
+            for k in ("ssid", "key", "encryption", "hidden", "enabled")
+            if k in call.data
+        }
         try:
             # An enable-only change is a minimal write; SSID/key changes must echo the
             # iface's full config (the GL.iNet UI's contract), so fetch and merge it.

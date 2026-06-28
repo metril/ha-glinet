@@ -19,6 +19,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -115,30 +116,18 @@ async def async_setup_entry(
         "coordinator"
     ]
     configs = (coordinator.data or {}).get("configs", {})
-    async_add_entities(
+    entities: list[SwitchEntity] = [
         GlinetSwitch(coordinator, entry, desc)
         for desc in SWITCHES
         if desc.config_key in configs
-    )
-
-    # Dynamic VPN client switches, one per configured tunnel (added as they appear).
-    known_tunnels: set[Any] = set()
-
-    @callback
-    def _add_vpn_clients() -> None:
-        vpn_cfg = (coordinator.data or {}).get("configs", {}).get("vpn_client")
-        new = []
-        for profile in parsers.vpn_client_profiles(vpn_cfg):
-            tid = profile.get("tunnel_id")
-            if tid in known_tunnels:
-                continue
-            known_tunnels.add(tid)
-            new.append(GlinetVpnClientSwitch(coordinator, entry, tid, profile.get("name")))
-        if new:
-            async_add_entities(new)
-
-    _add_vpn_clients()
-    entry.async_on_unload(coordinator.async_add_listener(_add_vpn_clients))
+    ]
+    # One on/off VPN switch (the VPN-client select chooses which profile it acts on).
+    if "vpn_client" in configs:
+        entities.append(GlinetVpnSwitch(coordinator, entry))
+    # A local "armed" gate for the disruptive operating-mode change.
+    if "netmode" in configs:
+        entities.append(GlinetModeArmSwitch(coordinator, entry))
+    async_add_entities(entities)
 
     # Dynamic Wi-Fi radio switches, one per iface reported in system.get_status.wifi.
     known_ifaces: set[str] = set()
@@ -226,6 +215,8 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
             raise HomeAssistantError(
                 f"Failed to set {desc.name}: {err}"
             ) from err
+        # LED/Tor live in the slow config tier — re-read them now, not next interval.
+        self.coordinator.invalidate(desc.config_key)
         await self.coordinator.async_request_refresh()
 
     def _start_params(self) -> dict[str, Any]:
@@ -239,56 +230,117 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
         return params
 
 
-class GlinetVpnClientSwitch(GlinetEntity, SwitchEntity):
-    """Enable/disable a single VPN client tunnel (WireGuard/OpenVPN/etc.).
+class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
+    """Turn the VPN client on/off; the VPN-client select chooses which profile.
 
-    Toggling calls ``vpn-client.set_tunnel {enabled, tunnel_id}`` — the exact call
-    the GL.iNet UI uses. State comes from ``vpn-client.get_status``.
+    On → enable the targeted tunnel (and disable any other active one); off →
+    disable whichever tunnel is active. Both via ``vpn-client.set_tunnel
+    {enabled, tunnel_id}``. State (any tunnel active) comes from
+    ``vpn-client.get_status``.
     """
 
     _attr_icon = "mdi:vpn"
+    _attr_name = "VPN Client"
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
         entry: ConfigEntry,
-        tunnel_id: Any,
-        name: str | None,
     ) -> None:
-        """Initialize the VPN client switch for a tunnel."""
+        """Initialize the single VPN on/off switch."""
         super().__init__(coordinator, entry)
-        self._tunnel_id = tunnel_id
-        self._attr_name = f"VPN {name}" if name else f"VPN Client {tunnel_id}"
-        self._attr_unique_id = f"{entry.entry_id}_vpn_client_{tunnel_id}"
+        self._attr_unique_id = f"{entry.entry_id}_vpn_client"
 
     def _vpn_config(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("vpn_client")
 
+    def _target_tunnel(self) -> Any:
+        """Resolve the target tunnel: stored target, else active, else first."""
+        labels = parsers.vpn_client_option_map(self._vpn_config())
+        valid_ids = set(labels.values())
+        if self.coordinator.vpn_target in valid_ids:
+            return self.coordinator.vpn_target
+        active = parsers.vpn_client_active_tunnel(self._vpn_config())
+        if active is not None:
+            return active
+        return next(iter(valid_ids), None)
+
     @property
     def is_on(self) -> bool | None:
-        """Return whether this tunnel is enabled."""
-        return parsers.vpn_client_tunnel_enabled(self._vpn_config(), self._tunnel_id)
+        """Return whether any VPN client tunnel is active."""
+        return parsers.vpn_client_connected(self._vpn_config())
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable (connect) this VPN client tunnel."""
-        await self._set_tunnel(True)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable (disconnect) this VPN client tunnel."""
-        await self._set_tunnel(False)
-
-    async def _set_tunnel(self, enabled: bool) -> None:
+        """Enable the targeted VPN tunnel (disabling any other active one)."""
+        target = self._target_tunnel()
+        if target is None:
+            raise HomeAssistantError("No VPN client profile configured")
+        client = self.coordinator.client
         try:
-            await self.coordinator.client.call(
-                SVC_VPN_CLIENT,
-                "set_tunnel",
-                {"enabled": enabled, "tunnel_id": self._tunnel_id},
+            for profile in parsers.vpn_client_profiles(self._vpn_config()):
+                tid = profile.get("tunnel_id")
+                if profile.get("enabled") and tid != target:
+                    await client.call(
+                        SVC_VPN_CLIENT, "set_tunnel", {"enabled": False, "tunnel_id": tid}
+                    )
+            await client.call(
+                SVC_VPN_CLIENT, "set_tunnel", {"enabled": True, "tunnel_id": target}
             )
         except GlinetError as err:
-            raise HomeAssistantError(
-                f"Failed to set VPN tunnel {self._tunnel_id}: {err}"
-            ) from err
+            raise HomeAssistantError(f"Failed to enable VPN: {err}") from err
+        self.coordinator.invalidate("vpn_client")
         await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable whichever VPN tunnel is currently active."""
+        client = self.coordinator.client
+        try:
+            for profile in parsers.vpn_client_profiles(self._vpn_config()):
+                if profile.get("enabled"):
+                    await client.call(
+                        SVC_VPN_CLIENT,
+                        "set_tunnel",
+                        {"enabled": False, "tunnel_id": profile.get("tunnel_id")},
+                    )
+        except GlinetError as err:
+            raise HomeAssistantError(f"Failed to disable VPN: {err}") from err
+        self.coordinator.invalidate("vpn_client")
+        await self.coordinator.async_request_refresh()
+
+
+class GlinetModeArmSwitch(GlinetEntity, SwitchEntity):
+    """Local safety gate for the operating-mode change (no RPC).
+
+    Turn it on to allow the Operating Mode select to act; it auto-disarms after a
+    short timeout or once a mode change succeeds, so a Router↔AP switch can't be
+    triggered by accident.
+    """
+
+    _attr_icon = "mdi:shield-lock-outline"
+    _attr_name = "Mode Change Armed"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the mode-arm switch."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_mode_armed"
+
+    @property
+    def is_on(self) -> bool:
+        """Return whether a mode change is currently armed."""
+        return self.coordinator.mode_armed
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Arm the mode change (auto-disarms after a timeout)."""
+        self.coordinator.arm_mode()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disarm the mode change."""
+        self.coordinator.disarm_mode()
 
 
 _BAND_LABEL = {"2G": "2.4 GHz", "5G": "5 GHz", "6G": "6 GHz"}
@@ -340,4 +392,5 @@ class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
             raise HomeAssistantError(
                 f"Failed to set Wi-Fi {self._iface_name}: {err}"
             ) from err
+        self.coordinator.invalidate("wifi_config")
         await self.coordinator.async_request_refresh()

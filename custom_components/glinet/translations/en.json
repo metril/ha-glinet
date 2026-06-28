@@ -33,7 +33,12 @@
         "title": "GL.iNet options",
         "data": {
           "scan_interval": "Polling interval (seconds)",
+          "config_scan_interval": "Config refresh interval (seconds)",
           "enable_device_tracker": "Create device trackers for connected clients"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll dynamic status (connectivity, clients, VPN/repeater state).",
+          "config_scan_interval": "How often to re-read rarely-changing config (Wi-Fi, mode, LED, Tor). Edits made from Home Assistant still refresh immediately."
         }
       }
     }

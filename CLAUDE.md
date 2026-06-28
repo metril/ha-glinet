@@ -23,10 +23,24 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - `parsers.py` — **all field extraction lives here**, each via candidate dotted
   paths with fallbacks. This is the one place to adjust if a field path differs on
   a given router/firmware.
-- Platforms: `sensor`, `binary_sensor`, `select` (VPN client chooser), `switch`,
-  `button` (reboot), `device_tracker` (per-client), `update` (firmware notify).
-  Services in `services.py`: `block_client`, `scan_repeater` (returns networks via
-  `SupportsResponse.ONLY`), `connect_repeater`, `set_wifi` (device-scoped).
+- Platforms: `sensor`, `binary_sensor`, `select` (VPN chooser, operating mode, repeater
+  network), `switch`, `text` (Wi-Fi SSID/password), `button`, `device_tracker`, `update`.
+  Services in `services.py`: `block_client`, `scan_repeater` (`SupportsResponse.ONLY`),
+  `connect_repeater`, `set_mode`, `set_wifi` (device-scoped).
+- **Polling is tiered** (v0.4.0): `_FAST_READS` every cycle (dynamic status);
+  `_CONFIG_READS` on `CONF_CONFIG_SCAN_INTERVAL` (default 300s — wifi_config, netmode,
+  led, tor, ddns_config, repeater_saved); `_SLOW_READS` fixed 6h (firmware). Write paths
+  call `coordinator.invalidate(key)` so an edit re-reads immediately. The coordinator
+  also holds non-router UI state: `vpn_target`, `mode_armed` (+ `arm_mode`/`disarm_mode`
+  with an `async_call_later` auto-disarm), and `repeater_scan` (set by the scan button).
+- **VPN** = one `select` (which profile → `coordinator.vpn_target`) + one `switch`
+  (on/off, enforces single-active). Per-tunnel switches were removed in v0.4.0.
+- **Operating-mode select is arm-gated**: refuses unless `coordinator.mode_armed`
+  (set by the "Mode Change Armed" switch); disarms on success. `set_mode` service is the
+  unguarded automation path. `netmode.set_mode {mode:"router"|"ap"}`.
+- **Repeater network select**: options = "Disconnected" + saved SSIDs
+  (`repeater.get_saved_ap_list` → `parsers.repeater_saved_networks`); connect via
+  `repeater.connect {ssid, remember:true}` (saved nets need no key).
 
 ## Auth flow (firmware 4.x)
 

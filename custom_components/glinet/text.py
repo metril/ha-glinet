@@ -112,4 +112,5 @@ class GlinetWifiText(GlinetEntity, TextEntity):
             raise HomeAssistantError(
                 f"Failed to update Wi-Fi {self._iface_name} {self._field}: {err}"
             ) from err
+        self.coordinator.invalidate("wifi_config")
         await self.coordinator.async_request_refresh()

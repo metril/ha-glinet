@@ -281,6 +281,21 @@ def test_repeater_scan_networks():
     assert parsers.repeater_scan_networks({"res": "nope"}) == []
 
 
+def test_repeater_saved_networks():
+    cfg = {
+        "res": [
+            {"ssid": "HomeWifi", "macaddr": {"mode": "clone"}, "protocol": "dhcp"},
+            {"ssid": "OfficeWifi", "protocol": "dhcp"},
+            {"ssid": "HomeWifi"},  # duplicate dropped
+            {"protocol": "dhcp"},  # no ssid -> skipped
+        ]
+    }
+    saved = parsers.repeater_saved_networks(cfg)
+    assert [n["ssid"] for n in saved] == ["HomeWifi", "OfficeWifi"]
+    assert parsers.repeater_saved_networks(None) == []
+    assert parsers.repeater_saved_networks({"res": "nope"}) == []
+
+
 def test_cable_tethering_tor_ddns():
     assert parsers.cable_connected({"status": 3}) is True
     assert parsers.cable_connected({"status": 0}) is False

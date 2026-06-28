@@ -1,13 +1,15 @@
 """Select platform for GL.iNet routers.
 
-Currently exposes a single **VPN client selector**: pick which configured VPN
-profile is active (or "Off"). This is the clean answer to "which VPN should I use"
-when several tunnels are configured, and complements the per-tunnel switches in
-``switch.py``. Both drive the confirmed ``vpn-client.set_tunnel {enabled, tunnel_id}``
-call; status comes from ``vpn-client.get_status``.
+Three selectors (each created only if the router exposes the backing data):
 
-(An operating-mode select was investigated but firmware 4.x exposes no RPC to change
-the working mode, so mode is surfaced read-only as a diagnostic sensor instead.)
+- **VPN client** — choose *which* configured profile is the target. It does NOT turn
+  the VPN on/off (that's the VPN switch); selecting while a VPN is already active
+  switches over to the new profile immediately, otherwise it just records the target.
+- **Operating mode** — Router / Access Point via ``netmode.set_mode``, **gated** by the
+  "Mode Change Armed" switch so it can't be triggered by accident (switching mode is
+  disruptive — it can change the router's IP).
+- **Repeater network** — pick a *saved* upstream network to (re)connect as a repeater,
+  or "Disconnected" to drop the uplink.
 """
 
 from __future__ import annotations
@@ -24,13 +26,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
 from .api import GlinetError
-from .const import DOMAIN, SVC_NETMODE, SVC_VPN_CLIENT
+from .const import DOMAIN, SVC_NETMODE, SVC_REPEATER, SVC_VPN_CLIENT
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-OFF_OPTION = "Off"
+DISCONNECTED_OPTION = "Disconnected"
 
 
 async def async_setup_entry(
@@ -38,7 +40,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up GL.iNet selects (the VPN client selector, if VPN is configured)."""
+    """Set up GL.iNet selects for whatever the router exposes."""
     coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
@@ -48,11 +50,13 @@ async def async_setup_entry(
         entities.append(GlinetVpnClientSelect(coordinator, entry))
     if "netmode" in configs:
         entities.append(GlinetOperatingModeSelect(coordinator, entry))
+    if "repeater" in configs:
+        entities.append(GlinetRepeaterNetworkSelect(coordinator, entry))
     async_add_entities(entities)
 
 
 class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
-    """Select which configured VPN client profile is active (or Off)."""
+    """Choose which VPN client profile is the target (on/off is the VPN switch)."""
 
     _attr_icon = "mdi:vpn"
     _attr_name = "VPN Client"
@@ -69,67 +73,65 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
     def _vpn_config(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("vpn_client")
 
+    def _target_tunnel(self) -> Any:
+        """Resolve the effective target: stored target, else active, else first."""
+        labels = parsers.vpn_client_option_map(self._vpn_config())
+        valid_ids = set(labels.values())
+        if self.coordinator.vpn_target in valid_ids:
+            return self.coordinator.vpn_target
+        active = parsers.vpn_client_active_tunnel(self._vpn_config())
+        if active is not None:
+            return active
+        return next(iter(valid_ids), None)
+
     @property
     def options(self) -> list[str]:
-        """Return Off plus one option per configured VPN profile."""
-        return [OFF_OPTION, *parsers.vpn_client_option_map(self._vpn_config()).keys()]
+        """Return one option per configured VPN profile."""
+        return list(parsers.vpn_client_option_map(self._vpn_config()).keys())
 
     @property
     def current_option(self) -> str | None:
-        """Return the active profile's label, or Off."""
-        active_id = parsers.vpn_client_active_tunnel(self._vpn_config())
-        if active_id is None:
-            return OFF_OPTION
+        """Return the active profile's label, else the targeted profile's label."""
+        target = self._target_tunnel()
         for label, tunnel_id in parsers.vpn_client_option_map(self._vpn_config()).items():
-            if tunnel_id == active_id:
+            if tunnel_id == target:
                 return label
-        return OFF_OPTION
+        return None
 
     async def async_select_option(self, option: str) -> None:
-        """Activate the chosen profile (or turn the active one off)."""
-        client = self.coordinator.client
+        """Set the target profile; switch over immediately if a VPN is active."""
         labels = parsers.vpn_client_option_map(self._vpn_config())
-        try:
-            if option == OFF_OPTION:
-                # Disable whichever tunnel is currently enabled.
-                for profile in parsers.vpn_client_profiles(self._vpn_config()):
-                    if profile.get("enabled"):
-                        await client.call(
-                            SVC_VPN_CLIENT,
-                            "set_tunnel",
-                            {"enabled": False, "tunnel_id": profile.get("tunnel_id")},
-                        )
-            else:
-                target = labels.get(option)
-                if target is None:
-                    raise HomeAssistantError(f"Unknown VPN profile: {option}")
-                # Disable any other active tunnel first, then enable the target.
-                for profile in parsers.vpn_client_profiles(self._vpn_config()):
-                    tid = profile.get("tunnel_id")
-                    if profile.get("enabled") and tid != target:
-                        await client.call(
-                            SVC_VPN_CLIENT,
-                            "set_tunnel",
-                            {"enabled": False, "tunnel_id": tid},
-                        )
+        target = labels.get(option)
+        if target is None:
+            raise HomeAssistantError(f"Unknown VPN profile: {option}")
+        self.coordinator.vpn_target = target
+        active = parsers.vpn_client_active_tunnel(self._vpn_config())
+        if active is not None and active != target:
+            # A VPN is running — switch the active tunnel to the new target.
+            client = self.coordinator.client
+            try:
                 await client.call(
-                    SVC_VPN_CLIENT,
-                    "set_tunnel",
-                    {"enabled": True, "tunnel_id": target},
+                    SVC_VPN_CLIENT, "set_tunnel", {"enabled": False, "tunnel_id": active}
                 )
-        except GlinetError as err:
-            raise HomeAssistantError(f"Failed to select VPN '{option}': {err}") from err
+                await client.call(
+                    SVC_VPN_CLIENT, "set_tunnel", {"enabled": True, "tunnel_id": target}
+                )
+            except GlinetError as err:
+                raise HomeAssistantError(
+                    f"Failed to switch VPN to '{option}': {err}"
+                ) from err
+        self.coordinator.invalidate("vpn_client")
         await self.coordinator.async_request_refresh()
 
 
 class GlinetOperatingModeSelect(GlinetEntity, SelectEntity):
-    """Switch the router's working mode via ``netmode.set_mode``.
+    """Switch the working mode via ``netmode.set_mode`` — gated by the arm switch.
 
     Offers the modes that need no upstream Wi-Fi target — **Router** and
-    **Access Point** — and reflects the current mode (read via ``netmode.get_mode``)
-    even if it's a repeater/WDS mode set elsewhere. Switching mode is disruptive: it
-    can change the router's IP and briefly drop connectivity. (Repeater/relay/WDS
-    modes join an upstream AP and are driven by the repeater scan/connect flow.)
+    **Access Point** — and reflects the current mode (``netmode.get_mode``), even if
+    it's a repeater/WDS mode set elsewhere. Selecting is refused unless the
+    "Mode Change Armed" switch is on; on success the arm auto-disarms. Switching mode
+    is disruptive (can change the router's IP / drop connectivity).
     """
 
     _attr_icon = "mdi:router-wireless-settings"
@@ -168,7 +170,12 @@ class GlinetOperatingModeSelect(GlinetEntity, SelectEntity):
         return parsers.MODE_LABELS.get(current, current)
 
     async def async_select_option(self, option: str) -> None:
-        """Switch the working mode (Router / Access Point)."""
+        """Switch the working mode (Router / Access Point), if armed."""
+        if not self.coordinator.mode_armed:
+            raise HomeAssistantError(
+                "Mode change is disarmed. Turn on 'Mode Change Armed' first "
+                "(it auto-disarms shortly), then pick the mode."
+            )
         target = next(
             (m for m, label in parsers.MODE_LABELS.items() if label == option), None
         )
@@ -177,9 +184,71 @@ class GlinetOperatingModeSelect(GlinetEntity, SelectEntity):
                 f"Mode '{option}' can't be set directly; use the repeater flow."
             )
         try:
-            await self.coordinator.client.call(
-                SVC_NETMODE, "set_mode", {"mode": target}
-            )
+            await self.coordinator.client.call(SVC_NETMODE, "set_mode", {"mode": target})
         except GlinetError as err:
             raise HomeAssistantError(f"Failed to set mode '{option}': {err}") from err
+        self.coordinator.disarm_mode()
+        self.coordinator.invalidate("netmode")
+        await self.coordinator.async_request_refresh()
+
+
+class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
+    """(Re)connect the Wi-Fi repeater uplink by picking a saved network.
+
+    Options are "Disconnected" plus each saved upstream SSID (the router stores the
+    key, so reconnecting needs only the SSID). For a brand-new network, use the
+    ``glinet.scan_repeater`` + ``glinet.connect_repeater`` services.
+    """
+
+    _attr_icon = "mdi:wifi-arrow-up-down"
+    _attr_name = "Repeater Network"
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the repeater-network selector."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_repeater_network"
+
+    def _saved(self) -> list[str]:
+        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
+        return [n["ssid"] for n in parsers.repeater_saved_networks(cfg)]
+
+    @property
+    def options(self) -> list[str]:
+        """Return Disconnected plus saved upstream SSIDs (and the current one)."""
+        opts = [DISCONNECTED_OPTION, *self._saved()]
+        current = self._current_ssid()
+        if current and current not in opts:
+            opts.append(current)
+        return opts
+
+    def _current_ssid(self) -> str | None:
+        repeater = (self.coordinator.data or {}).get("configs", {}).get("repeater")
+        if parsers.repeater_connected(repeater):
+            return parsers.repeater_upstream_ssid(repeater)
+        return None
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the connected upstream SSID, else Disconnected."""
+        return self._current_ssid() or DISCONNECTED_OPTION
+
+    async def async_select_option(self, option: str) -> None:
+        """Connect to a saved network, or disconnect."""
+        client = self.coordinator.client
+        try:
+            if option == DISCONNECTED_OPTION:
+                await client.call(SVC_REPEATER, "disconnect")
+            else:
+                await client.call(
+                    SVC_REPEATER, "connect", {"ssid": option, "remember": True}
+                )
+        except GlinetError as err:
+            raise HomeAssistantError(
+                f"Failed to set repeater network '{option}': {err}"
+            ) from err
+        self.coordinator.invalidate("repeater_saved")
         await self.coordinator.async_request_refresh()

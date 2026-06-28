@@ -46,6 +46,12 @@ connect_repeater:
       required: false
       selector:
         text:
+    identity:
+      name: Identity
+      description: Username for WPA-Enterprise (802.1X) networks. Leave blank otherwise.
+      required: false
+      selector:
+        text:
 
 scan_repeater:
   name: Scan for repeater networks
@@ -60,6 +66,29 @@ scan_repeater:
       selector:
         device:
           integration: glinet
+
+set_mode:
+  name: Set operating mode
+  description: >-
+    Switch the router's working mode. WARNING: disruptive — changing to Access
+    Point can change the router's IP and briefly drop connectivity.
+  fields:
+    device_id:
+      name: Router
+      description: The GL.iNet router to act on.
+      required: true
+      selector:
+        device:
+          integration: glinet
+    mode:
+      name: Mode
+      description: The working mode to switch to.
+      required: true
+      selector:
+        select:
+          options:
+            - router
+            - ap
 
 set_wifi:
   name: Set Wi-Fi

@@ -48,6 +48,7 @@ def _stub_voluptuous() -> None:
     vol.All = lambda *a: (a[-1] if a else (lambda x: x))
     vol.Range = lambda *a, **k: (lambda x: x)
     vol.Coerce = lambda tp: tp
+    vol.In = lambda *a, **k: (lambda x: x)
     sys.modules["voluptuous"] = vol
 
 
@@ -129,6 +130,10 @@ def _stub_homeassistant() -> None:
         async_get_clientsession=MagicMock(return_value=MagicMock()),
     )
     ha_cv = _mod("homeassistant.helpers.config_validation", string=str, boolean=bool)
+    ha_evt = _mod(
+        "homeassistant.helpers.event",
+        async_call_later=lambda hass, delay, action: (lambda: None),
+    )
     ha_dr = _mod(
         "homeassistant.helpers.device_registry",
         DeviceInfo=dict,
@@ -140,6 +145,7 @@ def _stub_homeassistant() -> None:
     ha_helpers.aiohttp_client = ha_ac
     ha_helpers.config_validation = ha_cv
     ha_helpers.device_registry = ha_dr
+    ha_helpers.event = ha_evt
 
     modules = {
         "homeassistant": ha,
@@ -152,6 +158,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.aiohttp_client": ha_ac,
         "homeassistant.helpers.config_validation": ha_cv,
         "homeassistant.helpers.device_registry": ha_dr,
+        "homeassistant.helpers.event": ha_evt,
     }
     for name, module in modules.items():
         sys.modules.setdefault(name, module)

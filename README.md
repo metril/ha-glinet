@@ -14,15 +14,15 @@ Local polling, UI config flow, no cloud, no third-party Python dependencies.
 
 | Type | Entities |
 | --- | --- |
-| **Switches** | **Wi-Fi radios** (2.4/5 GHz + guest, on/off), **Tor**, router LEDs, per-tunnel VPN clients, WireGuard/OpenVPN server, Tailscale |
-| **Select** | **VPN client** (which profile is active), **Operating mode** (Router / Access Point) |
+| **Switches** | **Wi-Fi radios** (2.4/5 GHz + guest, on/off), **VPN client** (on/off), **Tor**, **Mode Change Armed**, router LEDs, WireGuard/OpenVPN server, Tailscale |
+| **Select** | **VPN client** (which profile), **Operating mode** (Router / Access Point), **Repeater network** (pick a saved upstream) |
 | **Text** | **Wi-Fi SSID** and **password**, per radio (editable) |
-| **Button** | Reboot, Disconnect repeater |
-| **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
+| **Button** | Reboot, Disconnect repeater, Scan repeater networks |
+| **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, VPN client profile, repeater upstream SSID / signal / state, repeater scan, cellular modem state / signal |
 | **Binary sensors** | Internet, WAN, 2.4/5 GHz & guest Wi-Fi, VPN client, Tailscale, repeater, WAN cable, USB tethering, Dynamic DNS, cellular modem |
 | **Device trackers** | One per connected client (home/away presence) |
 | **Update** | Firmware-available notification (via the router's online check) |
-| **Services** | `glinet.block_client`, `glinet.scan_repeater` (returns nearby networks), `glinet.connect_repeater`, `glinet.set_wifi` |
+| **Services** | `glinet.block_client`, `glinet.scan_repeater` (returns nearby networks), `glinet.connect_repeater`, `glinet.set_mode`, `glinet.set_wifi` |
 
 Entities for features a given model lacks (e.g. cellular modem, a VPN type that
 isn't configured, no repeater uplink) are automatically omitted.
@@ -34,26 +34,38 @@ editable **SSID** / **password** text entities. These call `wifi.set_config` exa
 as the router UI does (keyed by the interface name, e.g. `wifi2g`), verified on a live
 GL-MT3000.
 
-### Operating mode
-
-The **Operating Mode** select switches the router between **Router** and **Access
-Point** via `netmode.set_mode`. ⚠️ Changing mode is disruptive — it can change the
-router's IP and briefly drop connectivity (so you may need to reconfigure the
-integration's host afterwards). Repeater/Extender modes join an upstream network and
-are driven by the repeater scan/connect flow instead.
-
 ### Choosing / switching VPNs
 
-With several VPN profiles configured, the **VPN client** select switches between them
-(or **Off**) in one tap — calling the same `vpn-client.set_tunnel` the router UI uses.
-Each tunnel is also exposed as its own switch for per-tunnel automations.
+Two complementary controls: the **VPN client select** chooses *which* profile is the
+target, and the **VPN client switch** turns it on/off. Picking a different profile while
+a VPN is active switches over immediately; otherwise it just sets the target the switch
+will use. Only one client is ever active (the switch enforces it, matching the router).
+
+### Operating mode (guarded)
+
+Switching mode is disruptive — Access Point can change the router's IP and drop
+connectivity. So the **Operating Mode** select is **gated**: flip the **Mode Change
+Armed** switch first (it auto-disarms after ~30 s or once a switch happens), then pick
+Router / Access Point. There's also a `glinet.set_mode` service for automations. Mode is
+also a read-only sensor. (Repeater/Extender are driven by the repeater flow below.)
 
 ### Repeater (Wi-Fi as WAN)
 
-When the router uses a Wi-Fi uplink, the **Repeater** binary sensor plus the upstream
-SSID / signal / state sensors report the connection. `glinet.scan_repeater` returns
-nearby networks as service response data, `glinet.connect_repeater` joins one, and the
-**Disconnect repeater** button drops the uplink.
+- **Repeater network** select — pick one of your **saved** upstream networks to
+  reconnect in one tap (no password needed; the router keeps the key), or "Disconnected".
+- **Scan repeater networks** button → populates the **Repeater scan** sensor (nearby
+  SSIDs with signal/encryption/saved in its `networks` attribute).
+- For a brand-new secured network, call `glinet.connect_repeater` (SSID + password, plus
+  an `identity` field for WPA-Enterprise). `glinet.scan_repeater` returns networks as
+  service response data; the **Disconnect repeater** button drops the uplink.
+- The **Repeater** binary sensor + upstream SSID / signal / state sensors report status.
+
+### Polling
+
+Dynamic status (connectivity, clients, VPN/repeater state) polls on the **Polling
+interval** (default 30 s). Rarely-changing config (Wi-Fi, mode, LED, Tor, DDNS) polls on
+a separate **Config refresh interval** (default 5 min) — both tunable in **Configure**.
+Any change you make from Home Assistant refreshes its own data immediately regardless.
 
 ## Installation (HACS)
 

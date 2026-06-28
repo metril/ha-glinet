@@ -570,6 +570,30 @@ def repeater_state(config: dict[str, Any] | None) -> str | None:
     return str(value) if value else None
 
 
+def repeater_saved_networks(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return saved upstream networks from ``repeater.get_saved_ap_list``.
+
+    Each entry carries at least ``ssid`` (the router keeps the key, so reconnecting
+    needs only the SSID). Shape: ``{res:[{ssid, macaddr, protocol, ...}]}``.
+    """
+    if not config:
+        return []
+    entries = config.get("res") if isinstance(config, dict) else config
+    if not isinstance(entries, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ssid = entry.get("ssid")
+        if not ssid or ssid in seen:
+            continue
+        seen.add(ssid)
+        out.append({"ssid": ssid})
+    return out
+
+
 def repeater_scan_networks(result: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Normalize ``repeater.scan`` results into a stable list of networks.
 

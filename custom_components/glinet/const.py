@@ -12,6 +12,7 @@ MANUFACTURER: Final = "GL.iNet"
 CONF_HOST: Final = "host"
 CONF_PASSWORD: Final = "password"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
+CONF_CONFIG_SCAN_INTERVAL: Final = "config_scan_interval"
 CONF_ENABLE_DEVICE_TRACKER: Final = "enable_device_tracker"
 
 # Defaults
@@ -20,7 +21,13 @@ DEFAULT_USERNAME: Final = "root"
 DEFAULT_SCAN_INTERVAL: Final = 30
 MIN_SCAN_INTERVAL: Final = 5
 MAX_SCAN_INTERVAL: Final = 600
+# Rarely-changing config reads (Wi-Fi config, mode, LED, Tor, …) poll on a slower tier.
+DEFAULT_CONFIG_SCAN_INTERVAL: Final = 300
+MIN_CONFIG_SCAN_INTERVAL: Final = 60
+MAX_CONFIG_SCAN_INTERVAL: Final = 3600
 DEFAULT_HTTP_TIMEOUT: Final = 10
+# How long the "Mode Change Armed" switch stays armed before auto-disarming (s).
+MODE_ARM_TIMEOUT: Final = 30
 
 # JSON-RPC services (the wire name; note VPN services are hyphenated)
 SVC_SYSTEM: Final = "system"

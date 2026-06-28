@@ -21,6 +21,7 @@ from .api import GlinetApiClient, GlinetError
 from .const import (
     DOMAIN,
     SVC_CLIENTS,
+    SVC_NETMODE,
     SVC_REPEATER,
     SVC_WIFI,
 )
@@ -30,6 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_BLOCK_CLIENT = "block_client"
 SERVICE_CONNECT_REPEATER = "connect_repeater"
 SERVICE_SCAN_REPEATER = "scan_repeater"
+SERVICE_SET_MODE = "set_mode"
 SERVICE_SET_WIFI = "set_wifi"
 
 ATTR_DEVICE_ID = "device_id"
@@ -47,12 +49,20 @@ CONNECT_REPEATER_SCHEMA = vol.Schema(
         vol.Required(ATTR_DEVICE_ID): cv.string,
         vol.Required("ssid"): cv.string,
         vol.Optional("password", default=""): cv.string,
+        vol.Optional("identity", default=""): cv.string,
     }
 )
 
 SCAN_REPEATER_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
+    }
+)
+
+SET_MODE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required("mode"): vol.In(["router", "ap"]),
     }
 )
 
@@ -97,11 +107,20 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def _handle_connect_repeater(call: ServiceCall) -> None:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
-        params: dict[str, Any] = {"ssid": call.data["ssid"]}
+        params: dict[str, Any] = {"ssid": call.data["ssid"], "remember": True}
         if call.data.get("password"):
             params["key"] = call.data["password"]
+        if call.data.get("identity"):  # WPA-Enterprise username
+            params["identity"] = call.data["identity"]
         try:
             await client.call(SVC_REPEATER, "connect", params)
+        except GlinetError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def _handle_set_mode(call: ServiceCall) -> None:
+        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        try:
+            await client.call(SVC_NETMODE, "set_mode", {"mode": call.data["mode"]})
         except GlinetError as err:
             raise HomeAssistantError(str(err)) from err
 
@@ -152,6 +171,10 @@ def async_register_services(hass: HomeAssistant) -> None:
             schema=SCAN_REPEATER_SCHEMA,
             supports_response=SupportsResponse.ONLY,
         )
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_MODE):
+        hass.services.async_register(
+            DOMAIN, SERVICE_SET_MODE, _handle_set_mode, schema=SET_MODE_SCHEMA
+        )
     if not hass.services.has_service(DOMAIN, SERVICE_SET_WIFI):
         hass.services.async_register(
             DOMAIN, SERVICE_SET_WIFI, _handle_set_wifi, schema=SET_WIFI_SCHEMA
@@ -164,6 +187,7 @@ def async_unregister_services(hass: HomeAssistant) -> None:
         SERVICE_BLOCK_CLIENT,
         SERVICE_CONNECT_REPEATER,
         SERVICE_SCAN_REPEATER,
+        SERVICE_SET_MODE,
         SERVICE_SET_WIFI,
     ):
         if hass.services.has_service(DOMAIN, service):

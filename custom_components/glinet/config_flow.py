@@ -18,15 +18,19 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError, GlinetError
 from .const import (
+    CONF_CONFIG_SCAN_INTERVAL,
     CONF_ENABLE_DEVICE_TRACKER,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
+    DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_HOST,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MANUFACTURER,
+    MAX_CONFIG_SCAN_INTERVAL,
     MAX_SCAN_INTERVAL,
+    MIN_CONFIG_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
 
@@ -167,6 +171,15 @@ class GlinetOptionsFlow(OptionsFlow):
                         CONF_SCAN_INTERVAL,
                         default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
                     ): vol.All(int, vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
+                    vol.Required(
+                        CONF_CONFIG_SCAN_INTERVAL,
+                        default=opts.get(
+                            CONF_CONFIG_SCAN_INTERVAL, DEFAULT_CONFIG_SCAN_INTERVAL
+                        ),
+                    ): vol.All(
+                        int,
+                        vol.Range(min=MIN_CONFIG_SCAN_INTERVAL, max=MAX_CONFIG_SCAN_INTERVAL),
+                    ),
                     vol.Required(
                         CONF_ENABLE_DEVICE_TRACKER,
                         default=opts.get(CONF_ENABLE_DEVICE_TRACKER, True),

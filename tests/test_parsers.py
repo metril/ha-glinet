@@ -121,6 +121,23 @@ def test_vpn_client_unified():
     assert parsers.vpn_client_connected(None) is None
 
 
+def test_vpn_client_profiles_and_tunnel():
+    cfg = {
+        "mode": 0,
+        "status_list": [
+            {"enabled": False, "tunnel_id": 10, "name": "Home", "type": "wireguard"},
+            {"enabled": True, "tunnel_id": 11, "name": "Work", "type": "openvpn"},
+        ],
+    }
+    profiles = parsers.vpn_client_profiles(cfg)
+    assert [p["tunnel_id"] for p in profiles] == [10, 11]
+    assert parsers.vpn_client_tunnel_enabled(cfg, 10) is False
+    assert parsers.vpn_client_tunnel_enabled(cfg, 11) is True
+    assert parsers.vpn_client_tunnel_enabled(cfg, 99) is None
+    assert parsers.vpn_client_active_name(cfg) == "Work"
+    assert parsers.vpn_client_profiles(None) == []
+
+
 def test_led_enabled():
     assert parsers.led_enabled({"led_enable": True}) is True
     assert parsers.led_enabled({"enable": 0}) is False

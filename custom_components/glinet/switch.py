@@ -19,7 +19,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -30,6 +30,7 @@ from .const import (
     SVC_LED,
     SVC_OVPN_SERVER,
     SVC_TAILSCALE,
+    SVC_VPN_CLIENT,
     SVC_WG_SERVER,
 )
 from .coordinator import GlinetDataUpdateCoordinator
@@ -109,6 +110,25 @@ async def async_setup_entry(
         if desc.config_key in configs
     )
 
+    # Dynamic VPN client switches, one per configured tunnel (added as they appear).
+    known_tunnels: set[Any] = set()
+
+    @callback
+    def _add_vpn_clients() -> None:
+        vpn_cfg = (coordinator.data or {}).get("configs", {}).get("vpn_client")
+        new = []
+        for profile in parsers.vpn_client_profiles(vpn_cfg):
+            tid = profile.get("tunnel_id")
+            if tid in known_tunnels:
+                continue
+            known_tunnels.add(tid)
+            new.append(GlinetVpnClientSwitch(coordinator, entry, tid, profile.get("name")))
+        if new:
+            async_add_entities(new)
+
+    _add_vpn_clients()
+    entry.async_on_unload(coordinator.async_add_listener(_add_vpn_clients))
+
 
 class GlinetSwitch(GlinetEntity, SwitchEntity):
     """A GL.iNet switch."""
@@ -175,3 +195,55 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
             if value is not None:
                 params[key] = value
         return params
+
+
+class GlinetVpnClientSwitch(GlinetEntity, SwitchEntity):
+    """Enable/disable a single VPN client tunnel (WireGuard/OpenVPN/etc.).
+
+    Toggling calls ``vpn-client.set_tunnel {enabled, tunnel_id}`` — the exact call
+    the GL.iNet UI uses. State comes from ``vpn-client.get_status``.
+    """
+
+    _attr_icon = "mdi:vpn"
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+        tunnel_id: Any,
+        name: str | None,
+    ) -> None:
+        """Initialize the VPN client switch for a tunnel."""
+        super().__init__(coordinator, entry)
+        self._tunnel_id = tunnel_id
+        self._attr_name = f"VPN {name}" if name else f"VPN Client {tunnel_id}"
+        self._attr_unique_id = f"{entry.entry_id}_vpn_client_{tunnel_id}"
+
+    def _vpn_config(self) -> dict[str, Any] | None:
+        return (self.coordinator.data or {}).get("configs", {}).get("vpn_client")
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether this tunnel is enabled."""
+        return parsers.vpn_client_tunnel_enabled(self._vpn_config(), self._tunnel_id)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable (connect) this VPN client tunnel."""
+        await self._set_tunnel(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable (disconnect) this VPN client tunnel."""
+        await self._set_tunnel(False)
+
+    async def _set_tunnel(self, enabled: bool) -> None:
+        try:
+            await self.coordinator.client.call(
+                SVC_VPN_CLIENT,
+                "set_tunnel",
+                {"enabled": enabled, "tunnel_id": self._tunnel_id},
+            )
+        except GlinetError as err:
+            raise HomeAssistantError(
+                f"Failed to set VPN tunnel {self._tunnel_id}: {err}"
+            ) from err
+        await self.coordinator.async_request_refresh()

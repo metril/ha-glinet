@@ -257,13 +257,34 @@ def vpn_client_connected(config: dict[str, Any] | None) -> bool | None:
 
 def vpn_client_active_name(config: dict[str, Any] | None) -> str | None:
     """Return the name of the active (enabled) VPN client profile, if any."""
+    for entry in vpn_client_profiles(config):
+        if entry.get("enabled"):
+            return entry.get("name")
+    return None
+
+
+def vpn_client_profiles(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return the configured VPN client profiles from ``vpn-client.get_status``.
+
+    Each profile carries ``tunnel_id``, ``name``, ``enabled``, ``type`` (and
+    ``group_id``/``peer_id``). Toggling a profile uses
+    ``vpn-client.set_tunnel {enabled, tunnel_id}``.
+    """
     if not config:
-        return None
+        return []
     status_list = config.get("status_list")
     if isinstance(status_list, list):
-        for entry in status_list:
-            if isinstance(entry, dict) and entry.get("enabled"):
-                return entry.get("name")
+        return [e for e in status_list if isinstance(e, dict) and e.get("tunnel_id") is not None]
+    return []
+
+
+def vpn_client_tunnel_enabled(
+    config: dict[str, Any] | None, tunnel_id: Any
+) -> bool | None:
+    """Return whether a specific VPN client tunnel is enabled."""
+    for entry in vpn_client_profiles(config):
+        if entry.get("tunnel_id") == tunnel_id:
+            return bool(entry.get("enabled"))
     return None
 
 

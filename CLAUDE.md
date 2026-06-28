@@ -80,18 +80,12 @@ dump). Key real shapes:
   require `{group_id: N}` (group 0 was empty on the test router; the configured WG
   client is `tunnel_id:10`, in another group). `tools/vpn_control.py` scans groups
   and (with `--start`) confirms the start/stop method via a reversible cycle.
-- **VPN client method map** (firmware 4.8.1, via `tools/enum_methods.py`): control
-  lives on `wg-client` / `ovpn-client`, NOT `vpn-client` (which only has
-  `get_status` + a param-hungry `stop`). Existing wg-client methods: `get_status`(no),
-  `get_config_list`/`set_config`/`set_group`/`get_group_list`, and **`connect`,
-  `open`, `close`, `kill`** (these return code -1 with wrong/empty params, i.e. they
-  exist). `vpn-client.get_status` gives `group_id`/`peer_id`/`tunnel_id`/`type` per
-  profile. **STOP confirmed**: `wg-client.close {group_id, peer_id}` runs cleanly.
-  **START not yet confirmed**: `wg-client.connect {group_id, peer_id}` returns
-  `-1 Unknown` — needs more params (likely `set_config` to select the active peer
-  first, or the full peer object). Capture the exact call from the GL.iNet web UI's
-  /rpc traffic (browser devtools) before implementing a connect switch — do NOT
-  guess `set_config` params (risks corrupting the WG config).
+- **VPN client control — RESOLVED** (captured from the GL.iNet UI's own /rpc call):
+  toggle a client tunnel with **`vpn-client.set_tunnel {enabled: bool, tunnel_id: N}`**.
+  `tunnel_id` comes from `vpn-client.get_status.status_list[]` (each entry also has
+  `group_id`/`peer_id`/`name`/`type`/`enabled`). The integration creates one
+  `GlinetVpnClientSwitch` per tunnel. (The `enum_methods.py` sweep missed this only
+  because `set_tunnel`/`get_tunnel` weren't in the probed method list.)
 - **Other write payloads** (`wifi.set_config`, `clients.block_client`,
   `repeater.connect`) use documented method names but exact params are unconfirmed.
 - **Firmware-update** field (`new_version`) not present in get_status; the update

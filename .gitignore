@@ -10,3 +10,4 @@ glinet_rpc_dump.json
 glinet_vpn_discovery.json
 glinet_write_verify.json
 glinet_vpn_control.json
+glinet_methods.json

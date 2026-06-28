@@ -288,6 +288,32 @@ def vpn_client_tunnel_enabled(
     return None
 
 
+def vpn_client_active_tunnel(config: dict[str, Any] | None) -> Any:
+    """Return the tunnel_id of the active (enabled) VPN client profile, or None."""
+    for entry in vpn_client_profiles(config):
+        if entry.get("enabled"):
+            return entry.get("tunnel_id")
+    return None
+
+
+def vpn_client_option_map(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Map a stable display label -> tunnel_id for each configured VPN profile.
+
+    Profile names can collide, so any duplicate label is disambiguated with its
+    tunnel id. Order follows the router's ``status_list``. This is the pure logic
+    behind the VPN client selector; the entity layer adds the "Off" option.
+    """
+    seen: dict[str, int] = {}
+    labels: dict[str, Any] = {}
+    for profile in vpn_client_profiles(config):
+        tunnel_id = profile.get("tunnel_id")
+        name = profile.get("name") or f"Tunnel {tunnel_id}"
+        seen[name] = seen.get(name, 0) + 1
+        label = name if seen[name] == 1 else f"{name} ({tunnel_id})"
+        labels[label] = tunnel_id
+    return labels
+
+
 def led_enabled(config: dict[str, Any] | None) -> bool | None:
     """Return whether the router LEDs are enabled."""
     if not config:
@@ -332,3 +358,196 @@ def guest_wifi_up(status: dict[str, Any]) -> bool | None:
     if not guest_entries:
         return None
     return any(bool(e.get("up")) for e in guest_entries)
+
+
+# --- Operating mode ---------------------------------------------------------
+# ``system.get_status.system.mode`` is an integer working-mode. Only ``0`` (router)
+# is confirmed on real hardware; other values are mapped best-effort and otherwise
+# surfaced raw. NOTE: firmware 4.x exposes no RPC to *change* the working mode, so
+# this is read-only. ("Repeater" as an internet source is a separate thing — it is
+# a WAN uplink within router mode; see the repeater_* helpers.)
+_MODE_NAMES: dict[int, str] = {0: "router"}
+
+
+def operating_mode(status: dict[str, Any]) -> str | None:
+    """Return the router's working mode name (read-only)."""
+    value = first_path(status, "system.mode", "mode")
+    if value is None:
+        return None
+    try:
+        return _MODE_NAMES.get(int(value), f"mode_{int(value)}")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+# --- Repeater (WiFi-as-WAN uplink) ------------------------------------------
+# ``repeater.get_status`` describes the upstream the router is joined to as a
+# client: ``{running, state, state_s, ssid, signal, channel, connected, network,
+# ipv4:{...}, config:{...}}``. ``state`` 2 / ``state_s`` "connected" = up.
+
+def repeater_connected(config: dict[str, Any] | None) -> bool | None:
+    """Whether the router is connected to an upstream WiFi as a repeater."""
+    if not config:
+        return None
+    state_s = config.get("state_s")
+    if isinstance(state_s, str):
+        return state_s.lower() == "connected"
+    state = config.get("state")
+    if state is not None:
+        try:
+            return int(state) >= 2
+        except (TypeError, ValueError):
+            pass
+    if "running" in config:
+        return bool(config.get("running"))
+    return None
+
+
+def repeater_upstream_ssid(config: dict[str, Any] | None) -> str | None:
+    """Return the SSID of the upstream network the repeater is joined to."""
+    if not config:
+        return None
+    ssid = first_path(config, "ssid", "config.ssid")
+    return str(ssid) if ssid else None
+
+
+def repeater_signal(config: dict[str, Any] | None) -> int | None:
+    """Return the upstream signal strength in dBm, if reported."""
+    if not config:
+        return None
+    value = config.get("signal")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def repeater_state(config: dict[str, Any] | None) -> str | None:
+    """Return the repeater connection state string (e.g. 'connected')."""
+    if not config:
+        return None
+    value = config.get("state_s")
+    return str(value) if value else None
+
+
+def repeater_scan_networks(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Normalize ``repeater.scan`` results into a stable list of networks.
+
+    Each entry: ``{ssid, bssid, band, channel, signal, encrypted, saved}``.
+    """
+    if not result:
+        return []
+    entries = result.get("res") if isinstance(result, dict) else result
+    if not isinstance(entries, list):
+        return []
+    networks: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        encryption = entry.get("encryption")
+        if isinstance(encryption, dict):
+            encrypted = bool(encryption.get("enabled"))
+        else:
+            encrypted = bool(encryption)
+        networks.append(
+            {
+                "ssid": entry.get("ssid"),
+                "bssid": entry.get("bssid"),
+                "band": entry.get("band"),
+                "channel": entry.get("channel"),
+                "signal": entry.get("signal"),
+                "encrypted": encrypted,
+                "saved": bool(entry.get("saved")),
+            }
+        )
+    return networks
+
+
+# --- Cable / tethering / tor / ddns / modem ---------------------------------
+
+def cable_connected(config: dict[str, Any] | None) -> bool | None:
+    """Whether a WAN cable carrier is present (``cable.get_status.status``)."""
+    if not config:
+        return None
+    value = config.get("status")
+    try:
+        return int(value) >= 2 if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def tethering_active(config: dict[str, Any] | None) -> bool | None:
+    """Whether USB tethering is active (``tethering.get_status``)."""
+    if not config:
+        return None
+    status = config.get("status")
+    if status is not None:
+        try:
+            return int(status) >= 1
+        except (TypeError, ValueError):
+            pass
+    devices = config.get("devices")
+    if isinstance(devices, list):
+        return len(devices) > 0
+    return None
+
+
+def tor_enabled(config: dict[str, Any] | None) -> bool | None:
+    """Whether Tor is enabled (``tor.get_config.enable``)."""
+    if not config:
+        return None
+    value = first_path(config, "enable", "enabled")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "on", "yes")
+    return bool(value)
+
+
+def ddns_enabled(config: dict[str, Any] | None) -> bool | None:
+    """Whether dynamic DNS is enabled (``ddns.get_config.enable_ddns``)."""
+    if not config:
+        return None
+    value = first_path(config, "enable_ddns", "enable", "enabled")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "on", "yes")
+    return bool(value)
+
+
+def _modems(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not config:
+        return []
+    modems = config.get("modems")
+    if isinstance(modems, list):
+        return [m for m in modems if isinstance(m, dict)]
+    return []
+
+
+def modem_present(config: dict[str, Any] | None) -> bool | None:
+    """Whether a cellular modem is present/detected."""
+    if not config:
+        return None
+    return len(_modems(config)) > 0
+
+
+def modem_state(config: dict[str, Any] | None) -> str | None:
+    """Return the first modem's connection state string, if any."""
+    modems = _modems(config)
+    if not modems:
+        return None
+    value = first_path(modems[0], "state", "status", "sim_status")
+    return str(value) if value is not None else None
+
+
+def modem_signal(config: dict[str, Any] | None) -> int | None:
+    """Return the first modem's signal (dBm or %), if reported."""
+    modems = _modems(config)
+    if not modems:
+        return None
+    value = first_path(modems[0], "signal", "rssi", "csq")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None

@@ -32,10 +32,15 @@ from .const import (
     DATA_INFO,
     DATA_STATUS,
     DEFAULT_SCAN_INTERVAL,
+    SVC_CABLE,
     SVC_DDNS,
     SVC_LED,
+    SVC_MODEM,
     SVC_OVPN_SERVER,
+    SVC_REPEATER,
     SVC_TAILSCALE,
+    SVC_TETHERING,
+    SVC_TOR,
     SVC_VPN_CLIENT,
     SVC_WG_SERVER,
 )
@@ -48,10 +53,16 @@ _LOGGER = logging.getLogger(__name__)
 _OPTIONAL_READS: tuple[tuple[str, str, str], ...] = (
     ("led", SVC_LED, "get_config"),
     ("ddns", SVC_DDNS, "get_status"),
+    ("ddns_config", SVC_DDNS, "get_config"),
     ("vpn_client", SVC_VPN_CLIENT, "get_status"),
     ("wg_server", SVC_WG_SERVER, "get_status"),
     ("ovpn_server", SVC_OVPN_SERVER, "get_status"),
     ("tailscale", SVC_TAILSCALE, "get_status"),
+    ("repeater", SVC_REPEATER, "get_status"),
+    ("cable", SVC_CABLE, "get_status"),
+    ("tethering", SVC_TETHERING, "get_status"),
+    ("tor", SVC_TOR, "get_config"),
+    ("modem", SVC_MODEM, "get_status"),
 )
 
 

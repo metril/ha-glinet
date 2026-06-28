@@ -5,9 +5,13 @@ __pycache__/
 docs/superpowers/
 .DS_Store
 .venv/
+# Local admin password for discovery tooling — NEVER commit
+.glinet_pass
 # Local RPC dumps may contain identifying data (serial, ddns name) — never commit
 glinet_rpc_dump.json
 glinet_vpn_discovery.json
 glinet_write_verify.json
 glinet_vpn_control.json
 glinet_methods.json
+glinet_ui_methods.json
+glinet_control_discovery.json

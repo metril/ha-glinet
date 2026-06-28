@@ -144,6 +144,114 @@ def test_led_enabled():
     assert parsers.led_enabled(None) is None
 
 
+def test_operating_mode():
+    assert parsers.operating_mode({"system": {"mode": 0}}) == "router"
+    assert parsers.operating_mode({"system": {"mode": 3}}) == "mode_3"
+    assert parsers.operating_mode({"mode": 0}) == "router"
+    assert parsers.operating_mode({}) is None
+
+
+def test_repeater_status_real_shape():
+    # Mirrors repeater.get_status from a real GL-MT3000 in repeater (WISP) uplink.
+    status = {
+        "running": True,
+        "state": 2,
+        "state_s": "connected",
+        "ssid": "UpstreamNet",
+        "signal": -55,
+        "channel": 44,
+        "config": {"ssid": "UpstreamNet"},
+    }
+    assert parsers.repeater_connected(status) is True
+    assert parsers.repeater_upstream_ssid(status) == "UpstreamNet"
+    assert parsers.repeater_signal(status) == -55
+    assert parsers.repeater_state(status) == "connected"
+    # disconnected
+    down = {"running": False, "state": 0, "state_s": "disconnected"}
+    assert parsers.repeater_connected(down) is False
+    assert parsers.repeater_connected(None) is None
+    assert parsers.repeater_upstream_ssid(None) is None
+
+
+def test_repeater_scan_networks():
+    result = {
+        "res": [
+            {
+                "band": "2g",
+                "ssid": "Net1",
+                "bssid": "aa:bb:cc:dd:ee:ff",
+                "channel": 1,
+                "signal": -58,
+                "encryption": {"enabled": True, "description": "WPA2"},
+                "saved": False,
+            },
+            {
+                "band": "5g",
+                "ssid": "OpenNet",
+                "channel": 44,
+                "signal": -70,
+                "encryption": {"enabled": False},
+                "saved": True,
+            },
+        ]
+    }
+    nets = parsers.repeater_scan_networks(result)
+    assert [n["ssid"] for n in nets] == ["Net1", "OpenNet"]
+    assert nets[0]["encrypted"] is True
+    assert nets[1]["encrypted"] is False
+    assert nets[1]["saved"] is True
+    assert parsers.repeater_scan_networks(None) == []
+    assert parsers.repeater_scan_networks({"res": "nope"}) == []
+
+
+def test_cable_tethering_tor_ddns():
+    assert parsers.cable_connected({"status": 3}) is True
+    assert parsers.cable_connected({"status": 0}) is False
+    assert parsers.cable_connected(None) is None
+
+    assert parsers.tethering_active({"status": 0, "devices": []}) is False
+    assert parsers.tethering_active({"status": 1}) is True
+    # status absent -> fall back to the devices list
+    assert parsers.tethering_active({"devices": [{"x": 1}]}) is True
+    assert parsers.tethering_active({"devices": []}) is False
+
+    assert parsers.tor_enabled({"enable": False}) is False
+    assert parsers.tor_enabled({"enable": True}) is True
+    assert parsers.tor_enabled(None) is None
+
+    assert parsers.ddns_enabled({"enable_ddns": False}) is False
+    assert parsers.ddns_enabled({"enable_ddns": True}) is True
+
+
+def test_modem_parsers():
+    empty = {"modems": [], "new_sms_count": 0}
+    assert parsers.modem_present(empty) is False
+    assert parsers.modem_state(empty) is None
+    assert parsers.modem_signal(empty) is None
+    present = {"modems": [{"state": "connected", "signal": -71}]}
+    assert parsers.modem_present(present) is True
+    assert parsers.modem_state(present) == "connected"
+    assert parsers.modem_signal(present) == -71
+    assert parsers.modem_present(None) is None
+
+
+def test_vpn_client_option_map_and_active():
+    cfg = {
+        "mode": 3,
+        "status_list": [
+            {"enabled": False, "tunnel_id": 10, "name": "Home"},
+            {"enabled": True, "tunnel_id": 11, "name": "Work"},
+            {"enabled": False, "tunnel_id": 12, "name": "Home"},  # duplicate name
+        ],
+    }
+    labels = parsers.vpn_client_option_map(cfg)
+    # duplicate "Home" disambiguated by tunnel id
+    assert labels == {"Home": 10, "Work": 11, "Home (12)": 12}
+    assert parsers.vpn_client_active_tunnel(cfg) == 11
+    assert parsers.vpn_client_active_tunnel({"status_list": []}) is None
+    assert parsers.vpn_client_option_map(None) == {}
+
+
 def test_wifi_band_and_guest():
     # Mirrors system.get_status.wifi from a real GL-MT3000.
     status = {

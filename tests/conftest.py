@@ -62,10 +62,17 @@ def _stub_homeassistant() -> None:
     ha = _mod("homeassistant")
     ha._glinet_stub = True
 
+    class _SupportsResponse:
+        NONE = "none"
+        ONLY = "only"
+        OPTIONAL = "optional"
+
     ha_core = _mod(
         "homeassistant.core",
         HomeAssistant=MagicMock,
         ServiceCall=MagicMock,
+        ServiceResponse=dict,
+        SupportsResponse=_SupportsResponse,
         callback=lambda f: f,
     )
     ha_ce = _mod(
@@ -80,6 +87,7 @@ def _stub_homeassistant() -> None:
         BINARY_SENSOR = "binary_sensor"
         BUTTON = "button"
         DEVICE_TRACKER = "device_tracker"
+        SELECT = "select"
         SENSOR = "sensor"
         SWITCH = "switch"
         UPDATE = "update"

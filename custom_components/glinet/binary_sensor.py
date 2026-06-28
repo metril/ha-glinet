@@ -12,6 +12,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -28,6 +29,8 @@ class GlinetBinarySensorDescription(BinarySensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], bool | None] = lambda data: None
     # data["configs"] key required for this entity to be created (None = always).
     requires_config: str | None = None
+    # Extra gate evaluated against coordinator.data (e.g. only if a modem exists).
+    gate: Callable[[dict[str, Any]], bool] | None = None
 
 
 BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
@@ -82,6 +85,68 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
             data.get("configs", {}).get("tailscale")
         ),
     ),
+    GlinetBinarySensorDescription(
+        key="repeater",
+        name="Repeater",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        icon="mdi:wifi-arrow-up-down",
+        requires_config="repeater",
+        value_fn=lambda data: parsers.repeater_connected(
+            data.get("configs", {}).get("repeater")
+        ),
+    ),
+    GlinetBinarySensorDescription(
+        key="cable",
+        name="WAN Cable",
+        device_class=BinarySensorDeviceClass.PLUG,
+        icon="mdi:ethernet-cable",
+        requires_config="cable",
+        value_fn=lambda data: parsers.cable_connected(
+            data.get("configs", {}).get("cable")
+        ),
+    ),
+    GlinetBinarySensorDescription(
+        key="tethering",
+        name="USB Tethering",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        icon="mdi:usb",
+        requires_config="tethering",
+        value_fn=lambda data: parsers.tethering_active(
+            data.get("configs", {}).get("tethering")
+        ),
+    ),
+    GlinetBinarySensorDescription(
+        key="tor",
+        name="Tor",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:tor",
+        requires_config="tor",
+        value_fn=lambda data: parsers.tor_enabled(
+            data.get("configs", {}).get("tor")
+        ),
+    ),
+    GlinetBinarySensorDescription(
+        key="ddns",
+        name="Dynamic DNS",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:dns",
+        requires_config="ddns_config",
+        value_fn=lambda data: parsers.ddns_enabled(
+            data.get("configs", {}).get("ddns_config")
+        ),
+    ),
+    GlinetBinarySensorDescription(
+        key="modem",
+        name="Cellular Modem",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        icon="mdi:signal",
+        requires_config="modem",
+        gate=lambda data: parsers.modem_present(data.get("configs", {}).get("modem"))
+        is True,
+        value_fn=lambda data: parsers.modem_present(
+            data.get("configs", {}).get("modem")
+        ),
+    ),
 )
 
 
@@ -94,11 +159,20 @@ async def async_setup_entry(
     coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    configs = (coordinator.data or {}).get("configs", {})
+    data = coordinator.data or {}
+    configs = data.get("configs", {})
+
+    def _included(desc: GlinetBinarySensorDescription) -> bool:
+        if desc.requires_config is not None and desc.requires_config not in configs:
+            return False
+        if desc.gate is not None and not desc.gate(data):
+            return False
+        return True
+
     async_add_entities(
         GlinetBinarySensor(coordinator, entry, desc)
         for desc in BINARY_SENSORS
-        if desc.requires_config is None or desc.requires_config in configs
+        if _included(desc)
     )
 
 

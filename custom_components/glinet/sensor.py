@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
+    UnitOfSignalStrength,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -33,6 +34,10 @@ class GlinetSensorDescription(SensorEntityDescription):
     """Describes a GL.iNet sensor."""
 
     value_fn: Callable[[dict[str, Any]], Any] = lambda data: None
+    # data["configs"] key required for this entity to be created (None = always).
+    requires_config: str | None = None
+    # Extra gate evaluated against coordinator.data (e.g. only if a modem exists).
+    gate: Callable[[dict[str, Any]], bool] | None = None
 
 
 SENSORS: tuple[GlinetSensorDescription, ...] = (
@@ -102,6 +107,67 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
             data.get("configs", {}).get("vpn_client")
         ),
     ),
+    GlinetSensorDescription(
+        key="operating_mode",
+        name="Operating Mode",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:router-wireless-settings",
+        value_fn=lambda data: parsers.operating_mode(data.get("status", {})),
+    ),
+    GlinetSensorDescription(
+        key="repeater_ssid",
+        name="Repeater Upstream SSID",
+        icon="mdi:wifi-arrow-up-down",
+        requires_config="repeater",
+        value_fn=lambda data: parsers.repeater_upstream_ssid(
+            data.get("configs", {}).get("repeater")
+        ),
+    ),
+    GlinetSensorDescription(
+        key="repeater_signal",
+        name="Repeater Signal",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=UnitOfSignalStrength.DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        requires_config="repeater",
+        value_fn=lambda data: parsers.repeater_signal(
+            data.get("configs", {}).get("repeater")
+        ),
+    ),
+    GlinetSensorDescription(
+        key="repeater_state",
+        name="Repeater State",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:wifi-arrow-up-down",
+        requires_config="repeater",
+        value_fn=lambda data: parsers.repeater_state(
+            data.get("configs", {}).get("repeater")
+        ),
+    ),
+    GlinetSensorDescription(
+        key="modem_state",
+        name="Modem State",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:signal",
+        requires_config="modem",
+        gate=lambda data: parsers.modem_present(data.get("configs", {}).get("modem"))
+        is True,
+        value_fn=lambda data: parsers.modem_state(data.get("configs", {}).get("modem")),
+    ),
+    GlinetSensorDescription(
+        key="modem_signal",
+        name="Modem Signal",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=UnitOfSignalStrength.DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        requires_config="modem",
+        gate=lambda data: parsers.modem_present(data.get("configs", {}).get("modem"))
+        is True,
+        value_fn=lambda data: parsers.modem_signal(data.get("configs", {}).get("modem")),
+    ),
 )
 
 
@@ -114,7 +180,19 @@ async def async_setup_entry(
     coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    async_add_entities(GlinetSensor(coordinator, entry, desc) for desc in SENSORS)
+    data = coordinator.data or {}
+    configs = data.get("configs", {})
+
+    def _included(desc: GlinetSensorDescription) -> bool:
+        if desc.requires_config is not None and desc.requires_config not in configs:
+            return False
+        if desc.gate is not None and not desc.gate(data):
+            return False
+        return True
+
+    async_add_entities(
+        GlinetSensor(coordinator, entry, desc) for desc in SENSORS if _included(desc)
+    )
 
 
 class GlinetSensor(GlinetEntity, SensorEntity):

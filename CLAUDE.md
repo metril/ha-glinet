@@ -23,9 +23,10 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - `parsers.py` — **all field extraction lives here**, each via candidate dotted
   paths with fallbacks. This is the one place to adjust if a field path differs on
   a given router/firmware.
-- Platforms: `sensor`, `binary_sensor`, `switch`, `button` (reboot),
-  `device_tracker` (per-client), `update` (firmware notify). Services in
-  `services.py`: `block_client`, `connect_repeater`, `set_wifi` (device-scoped).
+- Platforms: `sensor`, `binary_sensor`, `select` (VPN client chooser), `switch`,
+  `button` (reboot), `device_tracker` (per-client), `update` (firmware notify).
+  Services in `services.py`: `block_client`, `scan_repeater` (returns networks via
+  `SupportsResponse.ONLY`), `connect_repeater`, `set_wifi` (device-scoped).
 
 ## Auth flow (firmware 4.x)
 
@@ -46,6 +47,44 @@ dump). Key real shapes:
 
 - Auth: `alg=1` (md5_crypt cipher), **`hash-method=sha256`** (outer hash). The
   client honors `hash-method`, so this works.
+
+### v0.2.0 control-surface discovery (live, fw 4.8.1)
+
+Discovery tooling: `tools/discover_control.py` (authenticated read + invalid-param
+existence sweep) and `tools/verify_wifi_mode.py` (reversible write probes). The web
+UI is **server-driven** (it pulls `ui.get_menu_list`/`ui.load_locales` at runtime),
+and its JS asset is gated behind a `Sec-Fetch-*` header check — so method names come
+from RPC probing, not the bundle. Confirmed:
+
+- **Operating mode** = `system.get_status.system.mode` (int; `0`=router). The menu's
+  `show_mode` vocab is `router/wds/relay/mesh/ap`. **There is NO RPC to *set* the
+  mode** — `system`/`network`/`mwan` `set_mode`/`set_network_mode`/`switch_mode` all
+  return -32601, and no `network`/`mwan` service exists. Mode is **read-only** (a
+  diagnostic sensor). ("Repeater" as an internet source is a WAN uplink within router
+  mode, not a working-mode — see below.)
+- **Repeater (Wi-Fi uplink) — CONFIRMED reads:** `repeater.get_status` →
+  `{running, state(2=conn), state_s:"connected", ssid, signal(dBm), channel, connected,
+  network:"wwan", ipv4:{...}, config:{...}}`; `repeater.scan` → `{res:[{ssid, bssid,
+  band, channel, signal, encryption:{enabled,description}, saved}]}`; `repeater.connect`
+  and `repeater.set_config` exist (need params). Drives the repeater binary sensor,
+  upstream SSID/signal/state sensors, and `scan_repeater` service.
+- **VPN client selector — CONFIRMED:** `vpn-client.get_status` +
+  `vpn-client.set_tunnel {enabled, tunnel_id}` (already known). `select.py` exposes one
+  selector (Off + each profile); pure label/dedup logic is in
+  `parsers.vpn_client_option_map`/`vpn_client_active_tunnel`.
+- **Other reads CONFIRMED:** `cable.get_status {status,mode}` (status≥2 = cable up),
+  `tethering.get_status {status,devices}`, `tor.get_config {enable,countries,manual}`,
+  `tor.get_status`, `ddns.get_config {enable_ddns}`, `modem.get_status {modems:[]}`
+  (empty on MT3000 → modem entities gated off).
+- **⚠️ WiFi writes NOT confirmable:** `wifi.set_config` *accepts* `{device,ifaces}` /
+  `{band,device,ifaces}` / `{res:[...]}` and returns `[]`, but **applies nothing** —
+  flipping `enabled` or `hidden` is a silent no-op across every shape tried (the 5G
+  radio is also busy as the repeater uplink). There is no `wifi.apply`/`set_status`/
+  `commit`. So WiFi radio on/off and SSID/password writes are **not shipped** as
+  entities; the `set_wifi` service remains best-effort/unverified. Cracking this needs
+  the UI's *actual* `wifi.set_config` request captured from browser devtools (the same
+  way `vpn-client.set_tunnel` was found). `led.set_config` works, so the write path
+  itself is sound — only the wifi payload contract is unknown.
 - `system.get_status.system`: `uptime`, `cpu.temperature` (nested!), `load_average[]`,
   `memory_total`/`memory_free`/`memory_buff_cache`. Memory-used subtracts buff/cache.
 - `system.get_status.network` is a **list** of interface dicts (`interface`,

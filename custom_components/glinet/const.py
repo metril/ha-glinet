@@ -37,6 +37,8 @@ SVC_REPEATER: Final = "repeater"
 SVC_CABLE: Final = "cable"
 SVC_DDNS: Final = "ddns"
 SVC_MODEM: Final = "modem"
+SVC_TOR: Final = "tor"
+SVC_TETHERING: Final = "tethering"
 
 # Keys used inside the coordinator's normalized data dict
 DATA_INFO: Final = "info"

@@ -18,6 +18,10 @@ from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
 
+# repeater.scan walks every band; the router UI allows up to ~300s. 60s is plenty
+# in practice and keeps the button responsive.
+SCAN_TIMEOUT = 60
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -105,7 +109,10 @@ class GlinetRepeaterScanButton(GlinetEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Run a repeater scan and stash the result on the coordinator."""
         try:
-            result = await self.coordinator.client.call(SVC_REPEATER, "scan")
+            # Scanning all bands can take tens of seconds — use a generous timeout.
+            result = await self.coordinator.client.call(
+                SVC_REPEATER, "scan", timeout=SCAN_TIMEOUT
+            )
         except GlinetError as err:
             raise HomeAssistantError(f"Failed to scan repeater networks: {err}") from err
         self.coordinator.repeater_scan = result if isinstance(result, dict) else None

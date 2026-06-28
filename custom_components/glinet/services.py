@@ -127,7 +127,8 @@ def async_register_services(hass: HomeAssistant) -> None:
     async def _handle_scan_repeater(call: ServiceCall) -> ServiceResponse:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
         try:
-            result = await client.call(SVC_REPEATER, "scan")
+            # Scanning all bands can take tens of seconds — use a generous timeout.
+            result = await client.call(SVC_REPEATER, "scan", timeout=60)
         except GlinetError as err:
             raise HomeAssistantError(str(err)) from err
         return {"networks": parsers.repeater_scan_networks(result)}

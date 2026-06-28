@@ -86,7 +86,7 @@ class GlinetApiClient:
         self._rpc_id += 1
         return self._rpc_id
 
-    async def _rpc(self, method: str, params: Any) -> Any:
+    async def _rpc(self, method: str, params: Any, timeout: float | None = None) -> Any:
         """Send a raw JSON-RPC request and return the ``result`` payload."""
         payload = {
             "jsonrpc": "2.0",
@@ -98,7 +98,7 @@ class GlinetApiClient:
             async with self._session.post(
                 self._url,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=self._http_timeout),
+                timeout=aiohttp.ClientTimeout(total=timeout or self._http_timeout),
             ) as resp:
                 if resp.status != 200:
                     raise GlinetApiError(f"HTTP {resp.status} from router")
@@ -156,20 +156,34 @@ class GlinetApiClient:
             if self._sid is None:
                 await self._login()
 
-    async def call(self, service: str, method: str, params: dict | None = None) -> Any:
-        """Call ``service.method`` with auto-login and one re-auth retry."""
+    async def call(
+        self,
+        service: str,
+        method: str,
+        params: dict | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Call ``service.method`` with auto-login and one re-auth retry.
+
+        ``timeout`` overrides the default HTTP timeout for slow methods such as
+        ``repeater.scan`` (the router can take tens of seconds to scan all bands).
+        """
         if self._sid is None:
             await self.async_login()
 
         try:
-            return await self._rpc("call", [self._sid, service, method, params or {}])
+            return await self._rpc(
+                "call", [self._sid, service, method, params or {}], timeout
+            )
         except GlinetAuthError:
             # Session likely expired — re-authenticate once and retry.
             _LOGGER.debug("Session expired, re-authenticating")
             async with self._auth_lock:
                 self._sid = None
                 await self._login()
-            return await self._rpc("call", [self._sid, service, method, params or {}])
+            return await self._rpc(
+                "call", [self._sid, service, method, params or {}], timeout
+            )
 
     async def async_logout(self) -> None:
         """Best-effort logout to release the session."""

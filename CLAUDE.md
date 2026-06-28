@@ -56,12 +56,12 @@ UI is **server-driven** (it pulls `ui.get_menu_list`/`ui.load_locales` at runtim
 and its JS asset is gated behind a `Sec-Fetch-*` header check — so method names come
 from RPC probing, not the bundle. Confirmed:
 
-- **Operating mode** = `system.get_status.system.mode` (int; `0`=router). The menu's
-  `show_mode` vocab is `router/wds/relay/mesh/ap`. **There is NO RPC to *set* the
-  mode** — `system`/`network`/`mwan` `set_mode`/`set_network_mode`/`switch_mode` all
-  return -32601, and no `network`/`mwan` service exists. Mode is **read-only** (a
-  diagnostic sensor). ("Repeater" as an internet source is a WAN uplink within router
-  mode, not a working-mode — see below.)
+- **Operating mode** = read via `netmode.get_mode` → `{mode:"router"|"ap"|"relay"|
+  "wds"}`; set via **`netmode.set_mode {mode}`** (v0.3.0). The setter lives under the
+  **`netmode`** service — which is why the v0.2.0 probes of `system`/`network`/`mwan`
+  `set_mode` all returned -32601 (those services don't have it / don't exist). The
+  `select` exposes Router/Access Point (relay/wds need an upstream AP → repeater flow).
+  `system.get_status.system.mode` (int; 0=router) is a coarse fallback.
 - **Repeater (Wi-Fi uplink) — CONFIRMED reads:** `repeater.get_status` →
   `{running, state(2=conn), state_s:"connected", ssid, signal(dBm), channel, connected,
   network:"wwan", ipv4:{...}, config:{...}}`; `repeater.scan` → `{res:[{ssid, bssid,
@@ -76,15 +76,38 @@ from RPC probing, not the bundle. Confirmed:
   `tethering.get_status {status,devices}`, `tor.get_config {enable,countries,manual}`,
   `tor.get_status`, `ddns.get_config {enable_ddns}`, `modem.get_status {modems:[]}`
   (empty on MT3000 → modem entities gated off).
-- **⚠️ WiFi writes NOT confirmable:** `wifi.set_config` *accepts* `{device,ifaces}` /
-  `{band,device,ifaces}` / `{res:[...]}` and returns `[]`, but **applies nothing** —
-  flipping `enabled` or `hidden` is a silent no-op across every shape tried (the 5G
-  radio is also busy as the repeater uplink). There is no `wifi.apply`/`set_status`/
-  `commit`. So WiFi radio on/off and SSID/password writes are **not shipped** as
-  entities; the `set_wifi` service remains best-effort/unverified. Cracking this needs
-  the UI's *actual* `wifi.set_config` request captured from browser devtools (the same
-  way `vpn-client.set_tunnel` was found). `led.set_config` works, so the write path
-  itself is sound — only the wifi payload contract is unknown.
+- **WiFi writes — RESOLVED (v0.3.0).** The v0.2.0 no-ops were a wrong param key. The
+  real key is **`iface_name`** (the iface's `name`: `wifi2g`/`wifi5g`/`guest2g`/
+  `guest5g`), NOT `iface`/`device`/`ifaces`. Confirmed by capturing the UI's own /rpc:
+  - radio on/off: `wifi.set_config {iface_name, enabled}` (live-verified off→on→off).
+  - SSID/password: `wifi.set_config {iface_name, ssid, key, encryption, hidden, device,
+    hwmode, channel, htmode, txpower, random_bssid}` — the iface's full config echoed
+    with the changed field (live-verified by round-tripping `hidden`). `parsers.
+    wifi_set_payload` builds it; `wifi.set_txpower` exists for TX power.
+
+### v0.3.0 control surface (captured via Chrome DevTools MCP)
+
+The web UI is server-driven: page logic loads from `/views/gl-sdk4-ui-<view>.common.js`
+(fetchable with `Sec-Fetch-*` headers) and write calls fire at runtime, so they had to
+be captured live. Used a headless Chrome (chrome-devtools-mcp) authenticated by minting
+a `sid` via `/rpc` and seeding it as the `Admin-Token` cookie (`?id=<sid>`), then read
+`POST /rpc` request bodies. Confirmed writes now shipped as entities:
+
+- **WiFi** radio on/off (per-iface switches) + SSID/password (text) — see above.
+- **Operating mode**: `netmode.set_mode {mode}` / `netmode.get_mode` (select).
+- **Tor**: `tor.set_config {enable, countries, manual}` (switch; shape live-verified).
+- **Repeater disconnect**: `repeater.disconnect {}` (button). Also seen: `repeater.
+  connect`, `set_config`, `enter/exit_bare_mode`, `get_saved_ap_list`, `remove_saved_ap`.
+- **Firmware check**: `upgrade.check_firmware_online {}` → `{current_version, prompt,
+    current_type, current_compile_time}` (`prompt`=update offered) — drives the update
+    entity; polled on a 6h throttle to avoid hammering GL's servers.
+- Other writes seen in the view JS (not yet shipped): `ddns.set_config`,
+  `network.set_advance_config`, `firewall.{set_port_forward,set_dmz,add/remove_port_forward}`,
+  `clients.set_info`, `cable.set_config`, `tethering.{set_connect,disconnect}`.
+
+⚠️ **`netmode.set_mode` is the one write confirmed from the UI contract but NOT
+live-flipped** (switching to AP changes the LAN IP and would drop the integration's
+connection). Treat router→ap as the user's deliberate, disruptive action.
 - `system.get_status.system`: `uptime`, `cpu.temperature` (nested!), `load_average[]`,
   `memory_total`/`memory_free`/`memory_buff_cache`. Memory-used subtracts buff/cache.
 - `system.get_status.network` is a **list** of interface dicts (`interface`,

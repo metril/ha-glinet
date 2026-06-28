@@ -116,16 +116,6 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
         ),
     ),
     GlinetBinarySensorDescription(
-        key="tor",
-        name="Tor",
-        device_class=BinarySensorDeviceClass.RUNNING,
-        icon="mdi:tor",
-        requires_config="tor",
-        value_fn=lambda data: parsers.tor_enabled(
-            data.get("configs", {}).get("tor")
-        ),
-    ),
-    GlinetBinarySensorDescription(
         key="ddns",
         name="Dynamic DNS",
         entity_category=EntityCategory.DIAGNOSTIC,

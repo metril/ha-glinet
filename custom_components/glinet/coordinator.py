@@ -36,13 +36,16 @@ from .const import (
     SVC_DDNS,
     SVC_LED,
     SVC_MODEM,
+    SVC_NETMODE,
     SVC_OVPN_SERVER,
     SVC_REPEATER,
     SVC_TAILSCALE,
     SVC_TETHERING,
     SVC_TOR,
+    SVC_UPGRADE,
     SVC_VPN_CLIENT,
     SVC_WG_SERVER,
+    SVC_WIFI,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,7 +66,16 @@ _OPTIONAL_READS: tuple[tuple[str, str, str], ...] = (
     ("tethering", SVC_TETHERING, "get_status"),
     ("tor", SVC_TOR, "get_config"),
     ("modem", SVC_MODEM, "get_status"),
+    ("wifi_config", SVC_WIFI, "get_config"),
+    ("netmode", SVC_NETMODE, "get_mode"),
 )
+
+# Reads that should be polled infrequently (e.g. an online firmware check that hits
+# GL.iNet's servers). Probed once like the others, then refreshed at most this often.
+_SLOW_READS: tuple[tuple[str, str, str], ...] = (
+    ("firmware", SVC_UPGRADE, "check_firmware_online"),
+)
+_SLOW_READ_INTERVAL = timedelta(hours=6)
 
 
 def parse_features(info: dict[str, Any]) -> set[str]:
@@ -103,6 +115,9 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._features: set[str] = set()
         # data key -> service supports being polled (set after first probe)
         self._supported: dict[str, bool] | None = None
+        # Slow-read caches: last value + monotonic timestamp of last fetch.
+        self._slow_cache: dict[str, Any] = {}
+        self._slow_last: dict[str, float] = {}
 
         super().__init__(
             hass,
@@ -173,4 +188,31 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._supported[key] = True
             if isinstance(result, dict):
                 configs[key] = result
+
+        await self._fetch_slow(first_run, configs)
         return configs
+
+    async def _fetch_slow(self, first_run: bool, configs: dict[str, Any]) -> None:
+        """Refresh infrequently-polled reads, reusing the cached value otherwise."""
+        now = self.hass.loop.time()
+        interval = _SLOW_READ_INTERVAL.total_seconds()
+        for key, service, method in _SLOW_READS:
+            if not first_run and not self._supported.get(key):
+                continue
+            due = (key not in self._slow_last) or (now - self._slow_last[key] >= interval)
+            if due:
+                try:
+                    result = await self.client.call(service, method)
+                except (GlinetConnectionError, GlinetAuthError):
+                    raise
+                except GlinetApiError as err:
+                    if first_run:
+                        _LOGGER.debug("Slow read %s.%s unsupported: %s", service, method, err)
+                    self._supported[key] = False
+                    continue
+                self._supported[key] = True
+                self._slow_last[key] = now
+                if isinstance(result, dict):
+                    self._slow_cache[key] = result
+            if key in self._slow_cache:
+                configs[key] = self._slow_cache[key]

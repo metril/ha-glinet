@@ -111,7 +111,9 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
         name="Operating Mode",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:router-wireless-settings",
-        value_fn=lambda data: parsers.operating_mode(data.get("status", {})),
+        value_fn=lambda data: parsers.operating_mode(
+            data.get("status", {}), data.get("configs", {}).get("netmode")
+        ),
     ),
     GlinetSensorDescription(
         key="repeater_ssid",

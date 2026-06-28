@@ -17,13 +17,14 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
 from .api import GlinetError
-from .const import DOMAIN, SVC_VPN_CLIENT
+from .const import DOMAIN, SVC_NETMODE, SVC_VPN_CLIENT
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
@@ -42,8 +43,12 @@ async def async_setup_entry(
         "coordinator"
     ]
     configs = (coordinator.data or {}).get("configs", {})
+    entities: list[SelectEntity] = []
     if "vpn_client" in configs:
-        async_add_entities([GlinetVpnClientSelect(coordinator, entry)])
+        entities.append(GlinetVpnClientSelect(coordinator, entry))
+    if "netmode" in configs:
+        entities.append(GlinetOperatingModeSelect(coordinator, entry))
+    async_add_entities(entities)
 
 
 class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
@@ -114,4 +119,67 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
                 )
         except GlinetError as err:
             raise HomeAssistantError(f"Failed to select VPN '{option}': {err}") from err
+        await self.coordinator.async_request_refresh()
+
+
+class GlinetOperatingModeSelect(GlinetEntity, SelectEntity):
+    """Switch the router's working mode via ``netmode.set_mode``.
+
+    Offers the modes that need no upstream Wi-Fi target — **Router** and
+    **Access Point** — and reflects the current mode (read via ``netmode.get_mode``)
+    even if it's a repeater/WDS mode set elsewhere. Switching mode is disruptive: it
+    can change the router's IP and briefly drop connectivity. (Repeater/relay/WDS
+    modes join an upstream AP and are driven by the repeater scan/connect flow.)
+    """
+
+    _attr_icon = "mdi:router-wireless-settings"
+    _attr_name = "Operating Mode"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the operating-mode selector."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_operating_mode"
+
+    def _current_mode(self) -> str | None:
+        netmode = (self.coordinator.data or {}).get("configs", {}).get("netmode")
+        status = (self.coordinator.data or {}).get("status", {})
+        return parsers.operating_mode(status, netmode)
+
+    @property
+    def options(self) -> list[str]:
+        """Return the selectable mode labels (plus the current mode if exotic)."""
+        labels = [parsers.MODE_LABELS[m] for m in parsers.MODE_OPTIONS]
+        current = self._current_mode()
+        if current and current not in parsers.MODE_OPTIONS:
+            labels.append(parsers.MODE_LABELS.get(current, current))
+        return labels
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current mode's label."""
+        current = self._current_mode()
+        if not current:
+            return None
+        return parsers.MODE_LABELS.get(current, current)
+
+    async def async_select_option(self, option: str) -> None:
+        """Switch the working mode (Router / Access Point)."""
+        target = next(
+            (m for m, label in parsers.MODE_LABELS.items() if label == option), None
+        )
+        if target not in parsers.MODE_OPTIONS:
+            raise HomeAssistantError(
+                f"Mode '{option}' can't be set directly; use the repeater flow."
+            )
+        try:
+            await self.coordinator.client.call(
+                SVC_NETMODE, "set_mode", {"mode": target}
+            )
+        except GlinetError as err:
+            raise HomeAssistantError(f"Failed to set mode '{option}': {err}") from err
         await self.coordinator.async_request_refresh()

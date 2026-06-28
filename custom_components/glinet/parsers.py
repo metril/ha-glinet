@@ -361,23 +361,163 @@ def guest_wifi_up(status: dict[str, Any]) -> bool | None:
 
 
 # --- Operating mode ---------------------------------------------------------
-# ``system.get_status.system.mode`` is an integer working-mode. Only ``0`` (router)
-# is confirmed on real hardware; other values are mapped best-effort and otherwise
-# surfaced raw. NOTE: firmware 4.x exposes no RPC to *change* the working mode, so
-# this is read-only. ("Repeater" as an internet source is a separate thing — it is
-# a WAN uplink within router mode; see the repeater_* helpers.)
-_MODE_NAMES: dict[int, str] = {0: "router"}
+# The working mode is read via ``netmode.get_mode`` → ``{mode: "router"|"ap"|"relay"
+# |"wds", ...}`` and set via ``netmode.set_mode {mode}`` (the ``netmode`` service —
+# confirmed from the router UI's own traffic). ``system.get_status.system.mode`` is a
+# coarse integer fallback when ``netmode`` isn't present.
+_MODE_INT_NAMES: dict[int, str] = {0: "router"}
+
+# Selectable modes that need no upstream Wi-Fi target (relay/wds join an AP and are
+# driven by the repeater flow instead).
+MODE_OPTIONS: tuple[str, ...] = ("router", "ap")
+MODE_LABELS: dict[str, str] = {
+    "router": "Router",
+    "ap": "Access Point",
+    "relay": "Repeater",
+    "wds": "WDS",
+    "mesh": "Mesh",
+}
 
 
-def operating_mode(status: dict[str, Any]) -> str | None:
-    """Return the router's working mode name (read-only)."""
+def operating_mode(status: dict[str, Any], netmode: dict[str, Any] | None = None) -> str | None:
+    """Return the router's working-mode name.
+
+    Prefers the authoritative ``netmode.get_mode`` payload; falls back to the
+    integer ``system.get_status.system.mode``.
+    """
+    if isinstance(netmode, dict):
+        mode = netmode.get("mode")
+        if mode:
+            return str(mode)
     value = first_path(status, "system.mode", "mode")
     if value is None:
         return None
     try:
-        return _MODE_NAMES.get(int(value), f"mode_{int(value)}")
+        return _MODE_INT_NAMES.get(int(value), f"mode_{int(value)}")
     except (TypeError, ValueError):
         return str(value)
+
+
+# --- Wi-Fi interfaces (control) ---------------------------------------------
+# A radio/SSID is toggled with ``wifi.set_config {iface_name, enabled}``; a full
+# SSID/key change echoes the iface's complete config back (``iface_name`` is the key
+# that matters — e.g. ``wifi2g``/``wifi5g``/``guest2g``/``guest5g``). These helpers
+# expose the per-iface view and build the exact write payload.
+
+# Per-iface writable fields plus the band-level fields the UI echoes on a full save.
+_WIFI_IFACE_FIELDS = ("ssid", "key", "encryption", "hidden")
+_WIFI_BAND_FIELDS = ("device", "hwmode", "channel", "htmode", "txpower", "random_bssid")
+
+
+def wifi_status_ifaces(status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return per-iface live state from ``system.get_status.wifi``.
+
+    Each entry: ``{iface_name, band, guest, up, ssid}``.
+    """
+    wifi = status.get("wifi")
+    if not isinstance(wifi, list):
+        return []
+    out = []
+    for entry in wifi:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        out.append(
+            {
+                "iface_name": entry.get("name"),
+                "band": entry.get("band"),
+                "guest": bool(entry.get("guest")),
+                "up": bool(entry.get("up")),
+                "ssid": entry.get("ssid"),
+            }
+        )
+    return out
+
+
+def wifi_iface_up(status: dict[str, Any], iface_name: str) -> bool | None:
+    """Return whether a named Wi-Fi iface (e.g. ``wifi2g``) is up."""
+    for entry in wifi_status_ifaces(status):
+        if entry["iface_name"] == iface_name:
+            return entry["up"]
+    return None
+
+
+def wifi_config_ifaces(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Flatten ``wifi.get_config`` into per-iface dicts carrying band-level context.
+
+    Each entry merges the iface fields (``ssid``/``key``/``encryption``/``hidden``/
+    ``guest``/``name``) with its band's ``device``/``hwmode``/``channel``/``htmode``/
+    ``txpower``/``random_bssid`` — everything needed to round-trip ``set_config``.
+    """
+    if not config:
+        return []
+    res = config.get("res")
+    if not isinstance(res, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for band in res:
+        if not isinstance(band, dict):
+            continue
+        band_ctx = {k: band.get(k) for k in _WIFI_BAND_FIELDS}
+        for iface in band.get("ifaces", []) or []:
+            if not isinstance(iface, dict) or not iface.get("name"):
+                continue
+            merged = {
+                "iface_name": iface.get("name"),
+                "band": band.get("band"),
+                "guest": bool(iface.get("guest")),
+                **{k: iface.get(k) for k in _WIFI_IFACE_FIELDS},
+                **band_ctx,
+            }
+            out.append(merged)
+    return out
+
+
+def wifi_set_payload(
+    config: dict[str, Any] | None, iface_name: str, **override: Any
+) -> dict[str, Any] | None:
+    """Build the full ``wifi.set_config`` payload for an iface with overrides.
+
+    Mirrors the request the GL.iNet UI sends on a Wi-Fi "Apply": the iface's
+    ``ssid``/``key``/``encryption``/``hidden`` plus band ``device``/``hwmode``/
+    ``channel``/``htmode``/``txpower``/``random_bssid``. Returns ``None`` if the iface
+    isn't found.
+    """
+    for iface in wifi_config_ifaces(config):
+        if iface["iface_name"] == iface_name:
+            payload = {"iface_name": iface_name}
+            for key in (*_WIFI_IFACE_FIELDS, *_WIFI_BAND_FIELDS):
+                if iface.get(key) is not None:
+                    payload[key] = iface[key]
+            payload.update(override)
+            return payload
+    return None
+
+
+def wifi_iface_value(config: dict[str, Any] | None, iface_name: str, field: str) -> Any:
+    """Return a single field (e.g. ``ssid``) for a named iface from wifi config."""
+    for iface in wifi_config_ifaces(config):
+        if iface["iface_name"] == iface_name:
+            return iface.get(field)
+    return None
+
+
+# --- Firmware update --------------------------------------------------------
+# ``upgrade.check_firmware_online`` → ``{current_version, prompt, current_type,
+# current_compile_time}``; ``prompt`` true = a newer firmware is offered.
+
+def firmware_update_available(config: dict[str, Any] | None) -> bool | None:
+    """Whether a firmware update is available (``prompt``)."""
+    if not config:
+        return None
+    return bool(config.get("prompt"))
+
+
+def firmware_current_version(config: dict[str, Any] | None) -> str | None:
+    """Return the installed firmware version from the upgrade check."""
+    if not config:
+        return None
+    value = config.get("current_version")
+    return str(value) if value else None
 
 
 # --- Repeater (WiFi-as-WAN uplink) ------------------------------------------

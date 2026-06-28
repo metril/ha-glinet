@@ -39,6 +39,8 @@ SVC_DDNS: Final = "ddns"
 SVC_MODEM: Final = "modem"
 SVC_TOR: Final = "tor"
 SVC_TETHERING: Final = "tethering"
+SVC_NETMODE: Final = "netmode"
+SVC_UPGRADE: Final = "upgrade"
 
 # Keys used inside the coordinator's normalized data dict
 DATA_INFO: Final = "info"

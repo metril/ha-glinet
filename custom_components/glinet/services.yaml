@@ -63,7 +63,7 @@ scan_repeater:
 
 set_wifi:
   name: Set Wi-Fi
-  description: Update a Wi-Fi interface's SSID, key, or enabled state.
+  description: Update a Wi-Fi interface's SSID, password, or enabled state.
   fields:
     device_id:
       name: Router
@@ -72,10 +72,11 @@ set_wifi:
       selector:
         device:
           integration: glinet
-    iface:
-      name: Interface
-      description: The Wi-Fi interface identifier to modify.
+    iface_name:
+      name: Interface name
+      description: The Wi-Fi interface to modify (e.g. wifi2g, wifi5g, guest2g, guest5g).
       required: true
+      example: wifi5g
       selector:
         text:
     ssid:

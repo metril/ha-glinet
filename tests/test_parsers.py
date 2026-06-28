@@ -145,10 +145,87 @@ def test_led_enabled():
 
 
 def test_operating_mode():
+    # netmode.get_mode is authoritative when present
+    assert parsers.operating_mode({}, {"mode": "ap"}) == "ap"
+    assert parsers.operating_mode({"system": {"mode": 0}}, {"mode": "relay"}) == "relay"
+    # fall back to the integer system.mode
     assert parsers.operating_mode({"system": {"mode": 0}}) == "router"
     assert parsers.operating_mode({"system": {"mode": 3}}) == "mode_3"
     assert parsers.operating_mode({"mode": 0}) == "router"
     assert parsers.operating_mode({}) is None
+
+
+# Mirrors the real wifi.get_config res[] shape (band -> ifaces).
+WIFI_CONFIG = {
+    "res": [
+        {
+            "band": "2G",
+            "device": "mt798111",
+            "hwmode": "11g/n/ax",
+            "channel": 0,
+            "htmode": "auto",
+            "txpower": "Max",
+            "random_bssid": True,
+            "ifaces": [
+                {"name": "wifi2g", "ssid": "Home", "key": "secret12", "encryption": "sae-mixed", "guest": False, "hidden": False},
+                {"name": "guest2g", "ssid": "Home-Guest", "key": "guestpass", "encryption": "psk2", "guest": True, "hidden": False},
+            ],
+        },
+        {
+            "band": "5G",
+            "device": "mt798112",
+            "hwmode": "11a/n/ac/ax",
+            "channel": 0,
+            "htmode": "80",
+            "txpower": "Max",
+            "random_bssid": True,
+            "ifaces": [
+                {"name": "wifi5g", "ssid": "Home", "key": "secret12", "encryption": "sae-mixed", "guest": False, "hidden": False},
+            ],
+        },
+    ]
+}
+
+
+def test_wifi_status_ifaces_and_up():
+    status = {
+        "wifi": [
+            {"band": "2G", "guest": False, "name": "wifi2g", "ssid": "Home", "up": True},
+            {"band": "5G", "guest": False, "name": "wifi5g", "ssid": "Home", "up": False},
+        ]
+    }
+    ifaces = parsers.wifi_status_ifaces(status)
+    assert [i["iface_name"] for i in ifaces] == ["wifi2g", "wifi5g"]
+    assert parsers.wifi_iface_up(status, "wifi2g") is True
+    assert parsers.wifi_iface_up(status, "wifi5g") is False
+    assert parsers.wifi_iface_up(status, "nope") is None
+    assert parsers.wifi_status_ifaces({}) == []
+
+
+def test_wifi_config_ifaces_and_payload():
+    ifaces = parsers.wifi_config_ifaces(WIFI_CONFIG)
+    assert [i["iface_name"] for i in ifaces] == ["wifi2g", "guest2g", "wifi5g"]
+    # band-level context merged into each iface
+    g = next(i for i in ifaces if i["iface_name"] == "guest2g")
+    assert g["device"] == "mt798111" and g["guest"] is True
+
+    # enable-toggle-style override carries the full echoed config
+    payload = parsers.wifi_set_payload(WIFI_CONFIG, "wifi5g", ssid="NewName")
+    assert payload["iface_name"] == "wifi5g"
+    assert payload["ssid"] == "NewName"
+    assert payload["key"] == "secret12"
+    assert payload["device"] == "mt798112"
+    assert payload["htmode"] == "80"
+    assert parsers.wifi_set_payload(WIFI_CONFIG, "missing", ssid="x") is None
+    assert parsers.wifi_iface_value(WIFI_CONFIG, "wifi2g", "ssid") == "Home"
+
+
+def test_firmware_parsers():
+    fw = {"current_version": "4.8.1", "prompt": True}
+    assert parsers.firmware_update_available(fw) is True
+    assert parsers.firmware_current_version(fw) == "4.8.1"
+    assert parsers.firmware_update_available({"prompt": False}) is False
+    assert parsers.firmware_update_available(None) is None
 
 
 def test_repeater_status_real_shape():

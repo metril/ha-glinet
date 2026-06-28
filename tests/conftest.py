@@ -90,6 +90,7 @@ def _stub_homeassistant() -> None:
         SELECT = "select"
         SENSOR = "sensor"
         SWITCH = "switch"
+        TEXT = "text"
         UPDATE = "update"
 
     ha_const = _mod("homeassistant.const", Platform=_Platform)

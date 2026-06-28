@@ -59,7 +59,7 @@ SCAN_REPEATER_SCHEMA = vol.Schema(
 SET_WIFI_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
-        vol.Required("iface"): cv.string,
+        vol.Required("iface_name"): cv.string,
         vol.Optional("ssid"): cv.string,
         vol.Optional("key"): cv.string,
         vol.Optional("enabled"): cv.boolean,
@@ -115,11 +115,20 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def _handle_set_wifi(call: ServiceCall) -> None:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
-        params: dict[str, Any] = {"iface": call.data["iface"]}
-        for key in ("ssid", "key", "enabled"):
-            if key in call.data:
-                params[key] = call.data[key]
+        iface_name = call.data["iface_name"]
+        overrides = {k: call.data[k] for k in ("ssid", "key", "enabled") if k in call.data}
         try:
+            # An enable-only change is a minimal write; SSID/key changes must echo the
+            # iface's full config (the GL.iNet UI's contract), so fetch and merge it.
+            if set(overrides) <= {"enabled"}:
+                params: dict[str, Any] = {"iface_name": iface_name, **overrides}
+            else:
+                config = await client.call(SVC_WIFI, "get_config")
+                params = parsers.wifi_set_payload(config, iface_name, **overrides)
+                if params is None:
+                    raise HomeAssistantError(f"Wi-Fi iface {iface_name} not found")
+                if "enabled" in overrides:
+                    params["enabled"] = overrides["enabled"]
             await client.call(SVC_WIFI, "set_config", params)
         except GlinetError as err:
             raise HomeAssistantError(str(err)) from err

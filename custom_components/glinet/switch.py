@@ -30,8 +30,10 @@ from .const import (
     SVC_LED,
     SVC_OVPN_SERVER,
     SVC_TAILSCALE,
+    SVC_TOR,
     SVC_VPN_CLIENT,
     SVC_WG_SERVER,
+    SVC_WIFI,
 )
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
@@ -91,6 +93,15 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
         icon="mdi:vpn",
         is_on_fn=parsers.vpn_connected,
     ),
+    GlinetSwitchDescription(
+        key="tor",
+        name="Tor",
+        config_key="tor",
+        service=SVC_TOR,
+        kind="tor",
+        icon="mdi:tor",
+        is_on_fn=parsers.tor_enabled,
+    ),
 )
 
 
@@ -128,6 +139,25 @@ async def async_setup_entry(
 
     _add_vpn_clients()
     entry.async_on_unload(coordinator.async_add_listener(_add_vpn_clients))
+
+    # Dynamic Wi-Fi radio switches, one per iface reported in system.get_status.wifi.
+    known_ifaces: set[str] = set()
+
+    @callback
+    def _add_wifi() -> None:
+        status = (coordinator.data or {}).get("status", {})
+        new = []
+        for iface in parsers.wifi_status_ifaces(status):
+            name = iface["iface_name"]
+            if name in known_ifaces:
+                continue
+            known_ifaces.add(name)
+            new.append(GlinetWifiSwitch(coordinator, entry, iface))
+        if new:
+            async_add_entities(new)
+
+    _add_wifi()
+    entry.async_on_unload(coordinator.async_add_listener(_add_wifi))
 
 
 class GlinetSwitch(GlinetEntity, SwitchEntity):
@@ -175,6 +205,18 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
                 await client.call(desc.service, "set_config", config)
             elif desc.kind == "tailscale":
                 await client.call(desc.service, "set_config", {"enabled": enable})
+            elif desc.kind == "tor":
+                # Mirror the UI's torForm: enable + the existing countries/manual.
+                config = self._config() or {}
+                await client.call(
+                    desc.service,
+                    "set_config",
+                    {
+                        "enable": enable,
+                        "countries": config.get("countries", []),
+                        "manual": bool(config.get("manual", False)),
+                    },
+                )
             else:  # vpn: start/stop, passing through peer/group ids when known
                 if enable:
                     await client.call(desc.service, "start", self._start_params())
@@ -245,5 +287,57 @@ class GlinetVpnClientSwitch(GlinetEntity, SwitchEntity):
         except GlinetError as err:
             raise HomeAssistantError(
                 f"Failed to set VPN tunnel {self._tunnel_id}: {err}"
+            ) from err
+        await self.coordinator.async_request_refresh()
+
+
+_BAND_LABEL = {"2G": "2.4 GHz", "5G": "5 GHz", "6G": "6 GHz"}
+
+
+class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
+    """Enable/disable a single Wi-Fi radio/SSID.
+
+    Toggling calls ``wifi.set_config {iface_name, enabled}`` — the exact call the
+    GL.iNet UI uses (the key is ``iface_name``, e.g. ``wifi2g``/``guest5g``). Live
+    state comes from ``system.get_status.wifi[].up``.
+    """
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+        iface: dict[str, Any],
+    ) -> None:
+        """Initialize the Wi-Fi switch for an iface."""
+        super().__init__(coordinator, entry)
+        self._iface_name = iface["iface_name"]
+        band = _BAND_LABEL.get(str(iface.get("band")), str(iface.get("band") or ""))
+        kind = "Guest Wi-Fi" if iface.get("guest") else "Wi-Fi"
+        self._attr_name = f"{band} {kind}".strip()
+        self._attr_icon = "mdi:wifi-lock" if iface.get("guest") else "mdi:wifi"
+        self._attr_unique_id = f"{entry.entry_id}_wifi_{self._iface_name}"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether this Wi-Fi iface is up."""
+        status = (self.coordinator.data or {}).get("status", {})
+        return parsers.wifi_iface_up(status, self._iface_name)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable this Wi-Fi iface."""
+        await self._set_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable this Wi-Fi iface."""
+        await self._set_enabled(False)
+
+    async def _set_enabled(self, enabled: bool) -> None:
+        try:
+            await self.coordinator.client.call(
+                SVC_WIFI, "set_config", {"iface_name": self._iface_name, "enabled": enabled}
+            )
+        except GlinetError as err:
+            raise HomeAssistantError(
+                f"Failed to set Wi-Fi {self._iface_name}: {err}"
             ) from err
         await self.coordinator.async_request_refresh()

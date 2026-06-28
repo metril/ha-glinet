@@ -36,3 +36,41 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest pytest-asyncio aiohttp
       - run: pytest -q
+
+  import-smoke:
+    runs-on: ubuntu-latest
+    name: Platform import smoke test
+    # hassfest validates the manifest but does NOT import the platform modules,
+    # so a bad `from homeassistant...` import slips through. Import every platform
+    # against a real Home Assistant to catch it.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install homeassistant
+      - name: Import all platform modules
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          sys.path.insert(0, ".")
+          mods = [
+              "custom_components.glinet",
+              "custom_components.glinet.sensor",
+              "custom_components.glinet.binary_sensor",
+              "custom_components.glinet.select",
+              "custom_components.glinet.switch",
+              "custom_components.glinet.button",
+              "custom_components.glinet.device_tracker",
+              "custom_components.glinet.update",
+          ]
+          failed = False
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print(f"OK   {m}")
+              except Exception as e:  # noqa: BLE001
+                  failed = True
+                  print(f"FAIL {m}: {type(e).__name__}: {e}")
+          sys.exit(1 if failed else 0)
+          PY

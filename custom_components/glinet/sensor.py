@@ -16,7 +16,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
-    UnitOfSignalStrength,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -127,7 +126,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
         key="repeater_signal",
         name="Repeater Signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement=UnitOfSignalStrength.DECIBELS_MILLIWATT,
+        native_unit_of_measurement="dBm",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -160,7 +159,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
         key="modem_signal",
         name="Modem Signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement=UnitOfSignalStrength.DECIBELS_MILLIWATT,
+        native_unit_of_measurement="dBm",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         requires_config="modem",

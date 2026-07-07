@@ -1,15 +1,15 @@
 """Select platform for GL.iNet routers.
 
-Three selectors (each created only if the router exposes the backing data):
+Two selectors (each created only if the router exposes the backing data), each paired
+with an on/off switch that owns connect/disconnect — the select only picks the target:
 
 - **VPN client** — choose *which* configured profile is the target. It does NOT turn
   the VPN on/off (that's the VPN switch); selecting while a VPN is already active
   switches over to the new profile immediately, otherwise it just records the target.
-- **Operating mode** — Router / Access Point via ``netmode.set_mode``, **gated** by the
-  "Mode Change Armed" switch so it can't be triggered by accident (switching mode is
-  disruptive — it can change the router's IP).
-- **Repeater network** — pick a *saved* upstream network to (re)connect as a repeater,
-  or "Disconnected" to drop the uplink.
+- **Repeater network** — choose *which* saved upstream network to repeat. It does NOT
+  turn the repeater on/off (that's the Repeater switch); selecting while the repeater is
+  already connected switches to the new network immediately, otherwise it just records
+  the target for the next turn-on.
 """
 
 from __future__ import annotations
@@ -30,8 +30,6 @@ from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
-
-DISCONNECTED_OPTION = "Disconnected"
 
 
 async def async_setup_entry(
@@ -122,13 +120,15 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
 
 
 class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
-    """(Re)connect the Wi-Fi repeater uplink by picking a *saved* network.
+    """Choose which *saved* upstream network the repeater connects to.
 
-    Options are "Disconnected" plus each saved upstream network (the router stores the
-    key, so reconnecting needs only the saved config). Same-named saved networks are
+    On/off is the Repeater switch; this select only picks the target (the router stores
+    the key, so reconnecting needs only the saved config). Same-named saved networks are
     disambiguated by their stored config (see ``parsers.repeater_saved_option_map``).
-    For a brand-new network, use the ``glinet.scan_repeater`` +
-    ``glinet.connect_repeater`` services.
+    Selecting while the repeater is already connected switches to the new network
+    immediately; otherwise it just records the target for the next turn-on. For a
+    brand-new network, use the ``glinet.scan_repeater`` + ``glinet.connect_repeater``
+    services.
     """
 
     _attr_icon = "mdi:wifi-arrow-up-down"
@@ -149,48 +149,54 @@ class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        """Return Disconnected plus each saved network's (disambiguated) label."""
-        opts = [DISCONNECTED_OPTION, *self._label_map().keys()]
+        """Return each saved network's (disambiguated) label."""
+        opts = list(self._label_map().keys())
         current = self.current_option
         if current and current not in opts:
             opts.append(current)
         return opts
 
-    def _current_ssid(self) -> str | None:
+    def _connected_label(self) -> str | None:
+        """The connected upstream's label (matched by SSID), if connected."""
         repeater = (self.coordinator.data or {}).get("configs", {}).get("repeater")
-        if parsers.repeater_connected(repeater):
-            return parsers.repeater_upstream_ssid(repeater)
-        return None
-
-    @property
-    def current_option(self) -> str | None:
-        """Return the connected network's label (matched by SSID), else Disconnected."""
-        ssid = self._current_ssid()
+        if not parsers.repeater_connected(repeater):
+            return None
+        ssid = parsers.repeater_upstream_ssid(repeater)
         if not ssid:
-            return DISCONNECTED_OPTION
+            return None
         for label, entry in self._label_map().items():
             if entry.get("ssid") == ssid:
                 return label
         return ssid  # connected to something not in the saved list
 
+    @property
+    def current_option(self) -> str | None:
+        """The connected network's label, else the stored target, else the first saved."""
+        connected = self._connected_label()
+        if connected:
+            return connected
+        target = self.coordinator.repeater_target
+        if target in self._label_map():
+            return target
+        return next(iter(self._label_map()), None)
+
     async def async_select_option(self, option: str) -> None:
-        """Connect to the chosen saved network (full config), or disconnect."""
-        client = self.coordinator.client
-        try:
-            if option == DISCONNECTED_OPTION:
-                await client.call(SVC_REPEATER, "disconnect")
-            else:
-                entry = self._label_map().get(option)
-                if entry is None:
-                    raise HomeAssistantError(f"Unknown saved network: {option}")
-                # Pass the full saved config (as the UI does) so the right duplicate
-                # is used, plus remember=true.
-                await client.call(
+        """Record the target network; switch over now if the repeater is connected."""
+        entry = self._label_map().get(option)
+        if entry is None:
+            raise HomeAssistantError(f"Unknown saved network: {option}")
+        self.coordinator.repeater_target = option
+        connected = self._connected_label()
+        if connected is not None and connected != option:
+            # The repeater is running — switch to the newly chosen network now. Pass
+            # the full saved config (as the UI does) so the right duplicate is used.
+            try:
+                await self.coordinator.client.call(
                     SVC_REPEATER, "connect", {**entry, "remember": True}
                 )
-        except GlinetError as err:
-            raise HomeAssistantError(
-                f"Failed to set repeater network '{option}': {err}"
-            ) from err
+            except GlinetError as err:
+                raise HomeAssistantError(
+                    f"Failed to switch repeater to '{option}': {err}"
+                ) from err
         self.coordinator.invalidate("repeater_saved")
         await self.coordinator.async_request_refresh()

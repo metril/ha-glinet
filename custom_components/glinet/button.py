@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import GlinetError
-from .const import DOMAIN, SVC_REPEATER, SVC_SYSTEM
+from .const import DOMAIN, SVC_SYSTEM
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
@@ -28,8 +28,6 @@ async def async_setup_entry(
         "coordinator"
     ]
     buttons: list[ButtonEntity] = [GlinetRebootButton(coordinator, entry)]
-    if "repeater" in (coordinator.data or {}).get("configs", {}):
-        buttons.append(GlinetRepeaterDisconnectButton(coordinator, entry))
     async_add_entities(buttons)
 
 
@@ -54,28 +52,3 @@ class GlinetRebootButton(GlinetEntity, ButtonEntity):
             await self.coordinator.client.call(SVC_SYSTEM, "reboot")
         except GlinetError as err:
             raise HomeAssistantError(f"Failed to reboot router: {err}") from err
-
-
-class GlinetRepeaterDisconnectButton(GlinetEntity, ButtonEntity):
-    """Disconnect the router's Wi-Fi repeater uplink (``repeater.disconnect``)."""
-
-    _attr_name = "Disconnect Repeater"
-    _attr_icon = "mdi:wifi-off"
-
-    def __init__(
-        self,
-        coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
-        """Initialize the repeater-disconnect button."""
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_repeater_disconnect"
-
-    async def async_press(self) -> None:
-        """Disconnect the upstream repeater connection."""
-        try:
-            await self.coordinator.client.call(SVC_REPEATER, "disconnect")
-        except GlinetError as err:
-            raise HomeAssistantError(f"Failed to disconnect repeater: {err}") from err
-        self.coordinator.invalidate("repeater_saved")
-        await self.coordinator.async_request_refresh()

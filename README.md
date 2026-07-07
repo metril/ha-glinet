@@ -14,9 +14,9 @@ Local polling, UI config flow, no cloud, no third-party Python dependencies.
 
 | Type | Entities |
 | --- | --- |
-| **Switches** | **Wi-Fi radios** (2.4/5 GHz + guest, on/off), **VPN client** (on/off), **Tor**, router LEDs, WireGuard/OpenVPN server, Tailscale |
-| **Select** | **VPN client** (which profile), **Repeater network** (pick a saved upstream) |
-| **Button** | Reboot, Disconnect repeater |
+| **Switches** | **Wi-Fi radios** (2.4/5 GHz + guest, on/off), **VPN client** (on/off), **Repeater** (on/off), **Tor**, router LEDs, WireGuard/OpenVPN server, Tailscale |
+| **Select** | **VPN client** (which profile), **Repeater network** (which saved upstream) |
+| **Button** | Reboot |
 | **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
 | **Binary sensors** | Internet, WAN, 2.4/5 GHz & guest Wi-Fi, VPN client, Tailscale, repeater, WAN cable, USB tethering, Dynamic DNS, cellular modem |
 | **Device trackers** | One per connected client (home/away presence) |
@@ -54,14 +54,20 @@ handled by the repeater flow below.)
 
 ### Repeater (Wi-Fi as WAN)
 
-- **Repeater network** select — pick one of your **saved** upstream networks to
-  reconnect (no password needed; the router keeps the key), or "Disconnected".
-  Same-named saved networks are disambiguated by their stored config so you can tell
-  them apart.
+Like the VPN, two complementary controls: the **Repeater switch** turns the uplink
+**on/off**, and the **Repeater network** select chooses *which* saved network it connects
+to.
+
+- **Repeater switch** — on connects to the selected network; off disconnects the uplink.
+- **Repeater network** select — pick one of your **saved** upstream networks (no password
+  needed; the router keeps the key). Picking a different network while the repeater is on
+  switches over immediately; while it's off it just sets the target the switch will use.
+  Same-named saved networks are disambiguated by their stored config so you can tell them
+  apart.
 - For a brand-new network: `glinet.scan_repeater` returns nearby networks (SSID, BSSID,
   band, signal, encryption) as service response data; `glinet.connect_repeater` joins one
   (SSID + password, plus optional `identity` for WPA-Enterprise and `bssid` to target a
-  specific same-named AP). The **Disconnect repeater** button drops the uplink.
+  specific same-named AP).
 - The **Repeater** binary sensor + upstream SSID / signal / state sensors report status.
 
 ### Firmware

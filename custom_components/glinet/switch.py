@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     SVC_LED,
     SVC_OVPN_SERVER,
+    SVC_REPEATER,
     SVC_TAILSCALE,
     SVC_TOR,
     SVC_VPN_CLIENT,
@@ -126,6 +127,10 @@ async def async_setup_entry(
     # One on/off VPN switch (the VPN-client select chooses which profile it acts on).
     if "vpn_client" in configs:
         entities.append(GlinetVpnSwitch(coordinator, entry))
+    # One on/off Repeater switch (the Repeater-network select chooses which saved
+    # network it connects to).
+    if "repeater" in configs:
+        entities.append(GlinetRepeaterSwitch(coordinator, entry))
     async_add_entities(entities)
 
     # Dynamic Wi-Fi radio switches, one per iface reported in system.get_status.wifi.
@@ -307,6 +312,75 @@ class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
         await self.coordinator.async_request_refresh()
 
 
+class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
+    """Turn the Wi-Fi repeater uplink on/off; the Repeater-network select picks which.
+
+    On → connect to the target saved network via ``repeater.connect
+    {**saved_entry, remember:True}``; off → ``repeater.disconnect``. Live state
+    (connected to an upstream) comes from ``repeater.get_status``. The target is
+    ``coordinator.repeater_target`` (a saved-network label), set by the select.
+    """
+
+    _attr_icon = "mdi:wifi-arrow-up-down"
+    _attr_name = "Repeater"
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the repeater on/off switch."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_repeater"
+
+    def _label_map(self) -> dict[str, dict[str, Any]]:
+        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
+        return parsers.repeater_saved_option_map(cfg)
+
+    def _status(self) -> dict[str, Any] | None:
+        return (self.coordinator.data or {}).get("configs", {}).get("repeater")
+
+    def _target_entry(self) -> dict[str, Any] | None:
+        """Resolve the saved network to connect: stored target, else connected, else first."""
+        labels = self._label_map()
+        target = self.coordinator.repeater_target
+        if target in labels:
+            return labels[target]
+        # Fall back to the currently-connected network (match by SSID), if saved.
+        if parsers.repeater_connected(self._status()):
+            ssid = parsers.repeater_upstream_ssid(self._status())
+            for entry in labels.values():
+                if entry.get("ssid") == ssid:
+                    return entry
+        return next(iter(labels.values()), None)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the repeater is connected to an upstream network."""
+        return parsers.repeater_connected(self._status())
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Connect the repeater to the target saved network."""
+        entry = self._target_entry()
+        if entry is None:
+            raise HomeAssistantError("No saved repeater network to connect to")
+        try:
+            await self.coordinator.client.call(
+                SVC_REPEATER, "connect", {**entry, "remember": True}
+            )
+        except GlinetError as err:
+            raise HomeAssistantError(f"Failed to connect repeater: {err}") from err
+        self.coordinator.invalidate("repeater_saved")
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disconnect the repeater uplink."""
+        try:
+            await self.coordinator.client.call(SVC_REPEATER, "disconnect")
+        except GlinetError as err:
+            raise HomeAssistantError(f"Failed to disconnect repeater: {err}") from err
+        self.coordinator.invalidate("repeater_saved")
+        await self.coordinator.async_request_refresh()
 
 
 _BAND_LABEL = {"2G": "2.4 GHz", "5G": "5 GHz", "6G": "6 GHz"}

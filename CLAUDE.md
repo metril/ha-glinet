@@ -33,7 +33,8 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   `_CONFIG_READS` on `CONF_CONFIG_SCAN_INTERVAL` (default 300s — led, ddns_config, tor,
   netmode, repeater_saved); `_SLOW_READS` fixed 6h (firmware). Write paths call
   `coordinator.invalidate(key)` so an edit re-reads immediately. Coordinator also holds
-  `vpn_target` (the VPN select's chosen profile).
+  `vpn_target` (the VPN select's chosen profile) and `repeater_target` (the repeater
+  select's chosen saved-network label).
 - **VPN** = one `select` (which profile → `coordinator.vpn_target`) + one `switch`
   (on/off, enforces single-active). Per-tunnel switches removed in v0.4.0.
 - **Operating mode is service-only** (v0.5.0): `glinet.set_mode {mode, confirm:true}` →
@@ -42,12 +43,17 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - **Wi-Fi config is service-only** (v0.5.0): the SSID/password `text` entities were
   removed; `glinet.set_wifi` handles ssid/key/encryption/hidden via `wifi.set_config`
   (full-config echo, `parsers.wifi_set_payload`). Per-radio on/off **switches** remain.
-- **Repeater network select** (saved only): `parsers.repeater_saved_option_map` builds
-  unique labels (SSID, disambiguated by stored `protocol`/clone-MAC/index when names
-  collide) → full saved entry; connect = `repeater.connect {**saved_entry, remember:true}`
-  (verified live — saved entry is `{ssid, manual, auto_portal, disguise, macaddr, protocol}`).
-  Scanning/new-network connects stay services (the v0.4.0 scan button + scan sensor were
-  removed).
+- **Repeater = one `switch` (on/off) + one `select` (which saved network)** (v0.7.0,
+  mirrors the VPN pair). `GlinetRepeaterSwitch`: on = `repeater.connect {**saved_entry,
+  remember:true}` to `coordinator.repeater_target`; off = `repeater.disconnect {}`; `is_on`
+  = `parsers.repeater_connected`. `GlinetRepeaterNetworkSelect` (saved only): sets
+  `repeater_target`; if connected, switches over immediately, else just records the target.
+  `parsers.repeater_saved_option_map` builds unique labels (SSID, disambiguated by stored
+  `protocol`/clone-MAC/index when names collide) → full saved entry (verified live — saved
+  entry is `{ssid, manual, auto_portal, disguise, macaddr, protocol}`). The v0.6.x
+  "Disconnect Repeater" button and the select's "Disconnected" option were **removed** —
+  the switch owns on/off. Scanning/new-network connects stay services (the v0.4.0 scan
+  button + scan sensor were removed).
 
 ## Auth flow (firmware 4.x)
 
@@ -117,8 +123,9 @@ a `sid` via `/rpc` and seeding it as the `Admin-Token` cookie (`?id=<sid>`), the
 - **WiFi** radio on/off (per-iface switches) + SSID/password (text) — see above.
 - **Operating mode**: `netmode.set_mode {mode}` / `netmode.get_mode` (select).
 - **Tor**: `tor.set_config {enable, countries, manual}` (switch; shape live-verified).
-- **Repeater disconnect**: `repeater.disconnect {}` (button). Also seen: `repeater.
-  connect`, `set_config`, `enter/exit_bare_mode`, `get_saved_ap_list`, `remove_saved_ap`.
+- **Repeater on/off** (v0.7.0 switch): `repeater.connect {**saved_entry, remember:true}` /
+  `repeater.disconnect {}`. Also seen: `repeater.set_config`, `enter/exit_bare_mode`,
+  `get_saved_ap_list`, `remove_saved_ap`.
 - **Firmware update — FULL CONTRACT (v0.6.0, captured from the UI's /rpc + view JS).**
   Check: `upgrade.check_firmware_online {}` → `{current_version, current_type,
     current_compile_time, prompt, version_new?}`, polled on a 6h throttle. ⚠️ **`prompt`

@@ -129,8 +129,10 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._slow_cache: dict[str, Any] = {}
         self._slow_last: dict[str, float] = {}
 
-        # Shared UI state (not from the router): the chosen VPN target.
+        # Shared UI state (not from the router): the chosen VPN target and the
+        # chosen repeater target (a saved-network label, see select/switch).
         self.vpn_target: Any = None
+        self.repeater_target: Any = None
 
         super().__init__(
             hass,

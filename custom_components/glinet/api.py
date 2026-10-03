@@ -105,6 +105,8 @@ class GlinetApiClient:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=timeout or self._http_timeout),
             ) as resp:
+                if resp.status in (401, 403):
+                    raise GlinetAuthError(f"HTTP {resp.status} from router")
                 if resp.status >= 500:
                     raise GlinetConnectionError(f"HTTP {resp.status} from router")
                 if resp.status != 200:

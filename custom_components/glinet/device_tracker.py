@@ -54,7 +54,6 @@ class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
     """
 
     _attr_has_entity_name = False
-    _attr_entity_registry_enabled_default = True
 
     def __init__(
         self,
@@ -65,6 +64,11 @@ class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
         """Initialize the tracker for a client MAC."""
         super().__init__(coordinator, entry)
         self._mac = mac
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        """Enable trackers by default (ScannerEntity disables unknown devices)."""
+        return True
 
     def _client(self) -> dict[str, Any] | None:
         for client in (self.coordinator.data or {}).get("clients", []):

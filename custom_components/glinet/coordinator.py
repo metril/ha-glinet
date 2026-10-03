@@ -85,6 +85,10 @@ _SLOW_READS: tuple[tuple[str, str, str], ...] = (
     ("firmware", SVC_UPGRADE, "check_firmware_online"),
 )
 _SLOW_READ_INTERVAL = timedelta(hours=6)
+# Consecutive fast-read failures before the last good value is dropped.
+_MAX_FAST_FAILURES = 3
+# A failed throttled read is retried within this many seconds.
+_RETRY_BACKOFF = 300
 
 
 def parse_features(info: dict[str, Any]) -> set[str]:
@@ -132,6 +136,7 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._slow_last: dict[str, float] = {}
         # Last good value per fast read, served when a later cycle errors.
         self._last_fast: dict[str, Any] = {}
+        self._fast_failures: dict[str, int] = {}
         self._info_last: float | None = None
 
         # Shared UI state (not from the router): the chosen VPN target and the
@@ -177,14 +182,11 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # system.get_info is largely static — fetch once, then refresh on the slow
             # tier so a firmware upgrade is reflected in the device registry.
             now = self.hass.loop.time()
-            if not self._info:
+            if self._info_last is None:
                 self._info = await self.client.get_info()
                 self._features = parse_features(self._info)
                 self._info_last = now
-            elif (
-                self._info_last is None
-                or now - self._info_last >= _SLOW_READ_INTERVAL.total_seconds()
-            ):
+            elif now - self._info_last >= _SLOW_READ_INTERVAL.total_seconds():
                 await self._refresh_info(now)
 
             status = await self.client.get_status()
@@ -213,6 +215,7 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise
         except GlinetApiError as err:
             _LOGGER.debug("Refreshing system.get_info failed: %s", err)
+            self._info_last = now
             return
         self._info_last = now
         if not new_info:
@@ -273,11 +276,23 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
                 self._supported[key] = False
             else:
-                _LOGGER.debug("Read %s.%s failed, keeping last value: %s", service, method, err)
-                if key in self._last_fast:
-                    configs[key] = self._last_fast[key]
+                failures = self._fast_failures.get(key, 0) + 1
+                self._fast_failures[key] = failures
+                if failures >= _MAX_FAST_FAILURES:
+                    _LOGGER.debug(
+                        "Read %s.%s failed %d times, dropping last value: %s",
+                        service, method, failures, err,
+                    )
+                    self._last_fast.pop(key, None)
+                else:
+                    _LOGGER.debug(
+                        "Read %s.%s failed, keeping last value: %s", service, method, err
+                    )
+                    if key in self._last_fast:
+                        configs[key] = self._last_fast[key]
             return
         self._supported[key] = True
+        self._fast_failures.pop(key, None)
         if isinstance(result, dict):
             configs[key] = result
             self._last_fast[key] = result
@@ -311,6 +326,7 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.debug(
                         "Read %s.%s failed, serving cached value: %s", service, method, err
                     )
+                    self._slow_last[key] = now - interval + min(interval, _RETRY_BACKOFF)
                 else:
                     self._supported[key] = True
                     self._slow_last[key] = now

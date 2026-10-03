@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -41,6 +42,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: GlinetConfigEntry) -> bool:
     """Set up GL.iNet Router from a config entry."""
+    if entry.unique_id and dr.format_mac(entry.unique_id) != entry.unique_id:
+        hass.config_entries.async_update_entry(
+            entry, unique_id=dr.format_mac(entry.unique_id)
+        )
+
     session = async_get_clientsession(hass)
     client = GlinetApiClient(
         session=session,

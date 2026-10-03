@@ -55,6 +55,37 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   the switch owns on/off. Scanning/new-network connects stay services (the v0.4.0 scan
   button + scan sensor were removed).
 
+## v0.8.0 notes (HA 2026.9+ modernization)
+
+- **Minimum HA 2026.9, Python 3.14.** HA dropped `voluptuous`; use **`probatio`**
+  (`import probatio as vol`-style) in `config_flow.py`/`services.py`. CI (tests +
+  import-smoke) runs on Python 3.14 with `homeassistant>=2026.9`.
+- State lives in **`entry.runtime_data`** (`GlinetConfigEntry` = `ConfigEntry[coordinator]`),
+  not `hass.data`. Services are registered once in **`async_setup`** (not per entry).
+  Options flow is `OptionsFlowWithReload` (no `__init__`, no manual update listener).
+- Errors: services raise **`ServiceValidationError`** with `translation_domain/key`;
+  messages live under `exceptions` in `strings.json` (identical copy in
+  `translations/en.json`; keep them `cmp`-equal). Entities use `translation_key`s.
+- **Coordinator probe/retry/backoff:** first cycle probes each optional read; a
+  `GlinetApiError` *only then* marks it unsupported (never polled again). Later
+  errors keep the last good value; a fast read is **dropped (entity unknown) after 3
+  consecutive failures**. Throttled (config/slow) reads serve cache on error and retry
+  within <=5 min (`_RETRY_BACKOFF`), important for `upgrade.check_firmware_online`
+  (hits GL.iNet's cloud). `system.get_info` is on the 6h tier too; a changed
+  `firmware_version` is pushed to the device registry as `sw_version`. Connection/auth
+  errors map to `UpdateFailed` / `ConfigEntryAuthFailed`. API: HTTP 401/403 ->
+  `GlinetAuthError`, >=500 / non-JSON -> `GlinetConnectionError`, other -> `GlinetApiError`.
+- **Diagnostics** (`diagnostics.py`): `async_redact_data` with `TO_REDACT` = password, key,
+  sid, mac, macaddr, bssid, ip, ipv4, ipv6, ssid, alias, name, hostname, ddns, domain,
+  serial, sn, lan_mac, factory_mac, wan_mac, public_key, private_key, host.
+- **Last boot sensor** (timestamp, derived from uptime, stabilized against jitter).
+- **Reconfigure flow** (`async_step_reconfigure`): update host/password; unique id (the
+  formatted MAC) must match (`_abort_if_unique_id_mismatch`). Legacy non-normalized MAC
+  unique ids are migrated in `async_setup_entry`.
+- Device trackers: unique id is the client MAC (`ScannerEntity` contract), enabled by
+  default (property override, since `ScannerEntity` defines it as a property).
+- Tests: `tests/test_coordinator.py` uses the conftest HA stubs (skipped under real HA).
+
 ## Auth flow (firmware 4.x)
 
 1. `challenge {username:"root"}` → `{alg, salt, nonce, hash-method?}`

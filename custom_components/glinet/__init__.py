@@ -7,15 +7,20 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
-from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError
+from .api import GlinetApiClient
 from .const import CONF_HOST, CONF_PASSWORD, DOMAIN
 from .coordinator import GlinetDataUpdateCoordinator
-from .services import async_register_services, async_unregister_services
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
+
+type GlinetConfigEntry = ConfigEntry[GlinetDataUpdateCoordinator]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -28,7 +33,13 @@ PLATFORMS = [
 ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's services (once per Home Assistant run)."""
+    async_setup_services(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: GlinetConfigEntry) -> bool:
     """Set up GL.iNet Router from a config entry."""
     session = async_get_clientsession(hass)
     client = GlinetApiClient(
@@ -38,38 +49,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     coordinator = GlinetDataUpdateCoordinator(hass, entry, client)
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady:
-        raise
-    except GlinetConnectionError as err:
-        raise ConfigEntryNotReady(f"GL.iNet router not reachable: {err}") from err
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator,
-        "client": client,
-    }
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
-
-    async_register_services(hass)
-
     return True
 
 
-async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the entry when options change (e.g. scan interval)."""
-    await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: GlinetConfigEntry) -> bool:
     """Unload a GL.iNet Router config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        data = hass.data[DOMAIN].pop(entry.entry_id, None)
-        if data:
-            await data["client"].async_logout()
-        if not hass.data.get(DOMAIN):
-            async_unregister_services(hass)
+        await entry.runtime_data.client.async_logout()
     return unload_ok

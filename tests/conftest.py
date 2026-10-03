@@ -1,4 +1,4 @@
-"""Test fixtures: stub Home Assistant + voluptuous so the package imports.
+"""Test fixtures: stub Home Assistant (when not installed) so the package imports.
 
 The package ``__init__`` (and the api/coordinator/services chain it pulls in)
 imports Home Assistant, which isn't installed in CI. The pure modules under test
@@ -8,6 +8,7 @@ mirroring the approach used in the ha-awtrix integration's test suite.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from unittest.mock import MagicMock
@@ -18,38 +19,6 @@ def _mod(name: str, **attrs) -> types.ModuleType:
     for key, value in attrs.items():
         setattr(module, key, value)
     return module
-
-
-def _stub_voluptuous() -> None:
-    if "voluptuous" in sys.modules:
-        return
-    vol = types.ModuleType("voluptuous")
-
-    class _Schema:
-        def __init__(self, schema, *a, **k):
-            self._schema = schema
-
-        def __call__(self, data):
-            return data
-
-    class _Marker:
-        def __init__(self, key, *a, **k):
-            self.key = key
-
-        def __hash__(self):
-            return hash(self.key)
-
-        def __eq__(self, other):
-            return self.key == getattr(other, "key", other)
-
-    vol.Schema = _Schema
-    vol.Required = _Marker
-    vol.Optional = _Marker
-    vol.All = lambda *a: (a[-1] if a else (lambda x: x))
-    vol.Range = lambda *a, **k: (lambda x: x)
-    vol.Coerce = lambda tp: tp
-    vol.In = lambda *a, **k: (lambda x: x)
-    sys.modules["voluptuous"] = vol
 
 
 def _stub_homeassistant() -> None:
@@ -76,12 +45,21 @@ def _stub_homeassistant() -> None:
         SupportsResponse=_SupportsResponse,
         callback=lambda f: f,
     )
+
+    class _ConfigEntryState:
+        LOADED = "loaded"
+        NOT_LOADED = "not_loaded"
+        SETUP_RETRY = "setup_retry"
+        SETUP_ERROR = "setup_error"
+
     ha_ce = _mod(
         "homeassistant.config_entries",
         ConfigEntry=MagicMock,
         ConfigFlow=object,
         ConfigFlowResult=dict,
+        ConfigEntryState=_ConfigEntryState,
         OptionsFlow=object,
+        OptionsFlowWithReload=object,
     )
 
     class _Platform:
@@ -95,9 +73,15 @@ def _stub_homeassistant() -> None:
         UPDATE = "update"
 
     ha_const = _mod("homeassistant.const", Platform=_Platform)
+    _HAError = type(
+        "HomeAssistantError",
+        (Exception,),
+        {"__init__": lambda self, *a, **k: Exception.__init__(self, *a)},
+    )
     ha_exc = _mod(
         "homeassistant.exceptions",
-        HomeAssistantError=type("HomeAssistantError", (Exception,), {}),
+        HomeAssistantError=_HAError,
+        ServiceValidationError=type("ServiceValidationError", (_HAError,), {}),
         ConfigEntryNotReady=type("ConfigEntryNotReady", (Exception,), {}),
         ConfigEntryAuthFailed=type("ConfigEntryAuthFailed", (Exception,), {}),
         UpdateFailed=type("UpdateFailed", (Exception,), {}),
@@ -106,8 +90,24 @@ def _stub_homeassistant() -> None:
     ha_helpers = _mod("homeassistant.helpers")
 
     class _DUC(Generic[_T]):
-        def __init__(self, hass=None, logger=None, *, name="", update_interval=None, **k):
+        def __init__(
+            self,
+            hass=None,
+            logger=None,
+            *,
+            config_entry=None,
+            name="",
+            update_interval=None,
+            **k,
+        ):
+            self.hass = hass
+            self.config_entry = config_entry
+            self.name = name
+            self.update_interval = update_interval
             self.data = None
+
+        async def async_request_refresh(self):
+            return None
 
         def __init_subclass__(cls, **k):
             super().__init_subclass__()
@@ -129,7 +129,13 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.aiohttp_client",
         async_get_clientsession=MagicMock(return_value=MagicMock()),
     )
-    ha_cv = _mod("homeassistant.helpers.config_validation", string=str, boolean=bool)
+    ha_cv = _mod(
+        "homeassistant.helpers.config_validation",
+        string=str,
+        boolean=bool,
+        config_entry_only_config_schema=lambda domain: (lambda config: config),
+    )
+    ha_typing = _mod("homeassistant.helpers.typing", ConfigType=dict)
     ha_evt = _mod(
         "homeassistant.helpers.event",
         async_call_later=lambda hass, delay, action: (lambda: None),
@@ -140,12 +146,21 @@ def _stub_homeassistant() -> None:
         CONNECTION_NETWORK_MAC="mac",
         async_get=MagicMock(),
     )
+    ha_sel = _mod(
+        "homeassistant.helpers.selector",
+        BooleanSelector=MagicMock,
+        NumberSelector=MagicMock,
+        NumberSelectorConfig=MagicMock,
+        NumberSelectorMode=types.SimpleNamespace(BOX="box"),
+    )
 
     ha_helpers.update_coordinator = ha_uc
     ha_helpers.aiohttp_client = ha_ac
     ha_helpers.config_validation = ha_cv
     ha_helpers.device_registry = ha_dr
     ha_helpers.event = ha_evt
+    ha_helpers.typing = ha_typing
+    ha_helpers.selector = ha_sel
 
     modules = {
         "homeassistant": ha,
@@ -159,10 +174,12 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.config_validation": ha_cv,
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
+        "homeassistant.helpers.typing": ha_typing,
+        "homeassistant.helpers.selector": ha_sel,
     }
     for name, module in modules.items():
         sys.modules.setdefault(name, module)
 
 
-_stub_voluptuous()
-_stub_homeassistant()
+if importlib.util.find_spec("homeassistant") is None:
+    _stub_homeassistant()

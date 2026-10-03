@@ -75,12 +75,17 @@ class GlinetApiClient:
         self._auth_lock = asyncio.Lock()
 
     @property
-    def _url(self) -> str:
-        """Return the JSON-RPC endpoint URL."""
+    def base_url(self) -> str:
+        """Return the router's base URL (scheme added when missing)."""
         host = self._host
         if not host.startswith(("http://", "https://")):
             host = f"http://{host}"
-        return f"{host}/rpc"
+        return host
+
+    @property
+    def _url(self) -> str:
+        """Return the JSON-RPC endpoint URL."""
+        return f"{self.base_url}/rpc"
 
     def _next_id(self) -> int:
         self._rpc_id += 1
@@ -100,13 +105,23 @@ class GlinetApiClient:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=timeout or self._http_timeout),
             ) as resp:
+                if resp.status >= 500:
+                    raise GlinetConnectionError(f"HTTP {resp.status} from router")
                 if resp.status != 200:
                     raise GlinetApiError(f"HTTP {resp.status} from router")
-                data = await resp.json(content_type=None)
+                try:
+                    data = await resp.json(content_type=None)
+                except ValueError as err:  # includes JSONDecodeError
+                    raise GlinetConnectionError(
+                        "Router returned a non-JSON response"
+                    ) from err
         except aiohttp.ClientError as err:
             raise GlinetConnectionError(f"Failed to reach router: {err}") from err
         except asyncio.TimeoutError as err:
             raise GlinetConnectionError("Timed out talking to router") from err
+
+        if not isinstance(data, dict):
+            raise GlinetConnectionError("Router returned a non-JSON response")
 
         if "error" in data and data["error"] is not None:
             err = data["error"]

@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
@@ -20,10 +19,9 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
-from .const import DOMAIN
+from . import GlinetConfigEntry, parsers
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
@@ -172,15 +170,16 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet sensors."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     data = coordinator.data or {}
     configs = data.get("configs", {})
 
@@ -204,7 +203,7 @@ class GlinetSensor(GlinetEntity, SensorEntity):
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
         description: GlinetSensorDescription,
     ) -> None:
         """Initialize the sensor."""

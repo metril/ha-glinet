@@ -4,29 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.device_tracker import ScannerEntity, SourceType
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.device_tracker import ScannerEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
-from .const import CONF_ENABLE_DEVICE_TRACKER, DOMAIN
+from . import GlinetConfigEntry, parsers
+from .const import CONF_ENABLE_DEVICE_TRACKER
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet client device trackers, adding new clients as they appear."""
     if not entry.options.get(CONF_ENABLE_DEVICE_TRACKER, True):
         return
 
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     tracked: set[str] = set()
 
     @callback
@@ -47,20 +47,24 @@ async def async_setup_entry(
 
 
 class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
-    """Track a single client connected to the router."""
+    """Track a single client connected to the router.
+
+    The unique id is the client MAC (``ScannerEntity``'s contract), so the same client
+    seen by two GL.iNet entries yields a single tracker.
+    """
+
+    _attr_has_entity_name = False
+    _attr_entity_registry_enabled_default = True
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
         mac: str,
     ) -> None:
         """Initialize the tracker for a client MAC."""
         super().__init__(coordinator, entry)
         self._mac = mac
-        self._attr_unique_id = f"{entry.entry_id}_client_{mac}"
-        # Client trackers are their own thing — don't attach to the router device.
-        self._attr_device_info = None
 
     def _client(self) -> dict[str, Any] | None:
         for client in (self.coordinator.data or {}).get("clients", []):
@@ -75,11 +79,6 @@ class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
         if client:
             return parsers.client_name(client)
         return self._mac
-
-    @property
-    def source_type(self) -> SourceType:
-        """Return the source type."""
-        return SourceType.ROUTER
 
     @property
     def is_connected(self) -> bool:
@@ -99,6 +98,9 @@ class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
         return self._mac
 
     @property
-    def has_entity_name(self) -> bool:
-        """Trackers use the client name directly, not the device-prefixed name."""
-        return False
+    def hostname(self) -> str | None:
+        """Return the client's hostname."""
+        client = self._client()
+        if not client:
+            return None
+        return parsers.client_hostname(client)

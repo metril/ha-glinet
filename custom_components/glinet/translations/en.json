@@ -42,5 +42,22 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Device {device_id} is not a GL.iNet router known to Home Assistant."
+    },
+    "entry_not_loaded": {
+      "message": "The GL.iNet router \"{title}\" is not loaded."
+    },
+    "confirm_required": {
+      "message": "Refusing to change the operating mode without confirm: true (switching mode is disruptive and can change the router's IP)."
+    },
+    "wifi_iface_not_found": {
+      "message": "Wi-Fi interface {iface_name} was not found on the router."
+    },
+    "rpc_failed": {
+      "message": "The router rejected the request: {error}"
+    }
   }
 }

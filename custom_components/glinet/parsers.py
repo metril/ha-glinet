@@ -184,6 +184,10 @@ def client_name(client: dict[str, Any]) -> str | None:
     )
 
 
+def client_hostname(client: dict[str, Any]) -> str | None:
+    return client.get("name") or client.get("hostname") or None
+
+
 def client_is_online(client: dict[str, Any]) -> bool:
     return _client_online(client)
 

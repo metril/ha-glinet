@@ -162,6 +162,11 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._info
 
     @property
+    def supported_reads(self) -> dict[str, bool]:
+        """Return which optional reads the router supports (empty before first probe)."""
+        return dict(self._supported or {})
+
+    @property
     def features(self) -> set[str]:
         """Return the set of detected feature flags."""
         return self._features

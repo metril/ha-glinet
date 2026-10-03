@@ -131,7 +131,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
             host = reauth_entry.data[CONF_HOST]
             password = user_input[CONF_PASSWORD]
             try:
-                await _validate(self.hass, host, password)
+                info = await _validate(self.hass, host, password)
             except GlinetAuthError:
                 errors["base"] = "invalid_auth"
             except GlinetConnectionError:
@@ -139,14 +139,58 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
             except GlinetError:
                 errors["base"] = "unknown"
             else:
+                await self.async_set_unique_id(_unique_id_from_info(info, host))
+                self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     reauth_entry,
-                    data={**reauth_entry.data, CONF_PASSWORD: password},
+                    data_updates={CONF_PASSWORD: password},
                 )
 
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the router's host and/or admin password."""
+        errors: dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            host = user_input[CONF_HOST]
+            password = user_input[CONF_PASSWORD]
+            try:
+                info = await _validate(self.hass, host, password)
+            except GlinetAuthError:
+                errors["base"] = "invalid_auth"
+            except GlinetConnectionError:
+                errors["base"] = "cannot_connect"
+            except GlinetError:
+                _LOGGER.exception("Unexpected error validating GL.iNet router")
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(_unique_id_from_info(info, host))
+                self._abort_if_unique_id_mismatch()
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={CONF_HOST: host, CONF_PASSWORD: password},
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HOST, default=entry.data.get(CONF_HOST, DEFAULT_HOST)
+                    ): str,
+                    vol.Required(
+                        CONF_PASSWORD, default=entry.data.get(CONF_PASSWORD, "")
+                    ): str,
+                }
+            ),
             errors=errors,
         )
 

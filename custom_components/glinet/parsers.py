@@ -10,6 +10,7 @@ given router. Each helper returns ``None`` when nothing matches, so entities sho
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 
@@ -46,6 +47,11 @@ def uptime(status: dict[str, Any]) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def boot_time(uptime_seconds: float, now: datetime) -> datetime:
+    """Return the boot moment given the uptime and the current time."""
+    return now - timedelta(seconds=uptime_seconds)
 
 
 def cpu_temperature(status: dict[str, Any]) -> float | None:

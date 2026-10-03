@@ -54,7 +54,7 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
     """Choose which VPN client profile is the target (on/off is the VPN switch)."""
 
     _attr_icon = "mdi:vpn"
-    _attr_name = "VPN Client"
+    _attr_translation_key = "vpn_client"
 
     def __init__(
         self,
@@ -132,7 +132,7 @@ class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
     """
 
     _attr_icon = "mdi:wifi-arrow-up-down"
-    _attr_name = "Repeater Network"
+    _attr_translation_key = "repeater_network"
 
     def __init__(
         self,

@@ -61,7 +61,7 @@ class GlinetSwitchDescription(SwitchEntityDescription):
 SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     GlinetSwitchDescription(
         key="led",
-        name="LEDs",
+        translation_key="led",
         config_key="led",
         service=SVC_LED,
         kind="led",
@@ -70,7 +70,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="wireguard_server",
-        name="WireGuard Server",
+        translation_key="wireguard_server",
         config_key="wg_server",
         service=SVC_WG_SERVER,
         kind="vpn",
@@ -79,7 +79,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="openvpn_server",
-        name="OpenVPN Server",
+        translation_key="openvpn_server",
         config_key="ovpn_server",
         service=SVC_OVPN_SERVER,
         kind="vpn",
@@ -88,7 +88,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="tailscale",
-        name="Tailscale",
+        translation_key="tailscale",
         config_key="tailscale",
         service=SVC_TAILSCALE,
         kind="tailscale",
@@ -97,7 +97,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="tor",
-        name="Tor",
+        translation_key="tor",
         config_key="tor",
         service=SVC_TOR,
         kind="tor",
@@ -165,7 +165,6 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
         super().__init__(coordinator, entry)
         self.entity_description = description
         self._desc = description
-        self._attr_name = description.name
         self._attr_icon = description.icon
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
 
@@ -243,7 +242,7 @@ class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
     """
 
     _attr_icon = "mdi:vpn"
-    _attr_name = "VPN Client"
+    _attr_translation_key = "vpn_client"
 
     def __init__(
         self,
@@ -321,7 +320,7 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
     """
 
     _attr_icon = "mdi:wifi-arrow-up-down"
-    _attr_name = "Repeater"
+    _attr_translation_key = "repeater"
 
     def __init__(
         self,
@@ -403,8 +402,8 @@ class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
         super().__init__(coordinator, entry)
         self._iface_name = iface["iface_name"]
         band = _BAND_LABEL.get(str(iface.get("band")), str(iface.get("band") or ""))
-        kind = "Guest Wi-Fi" if iface.get("guest") else "Wi-Fi"
-        self._attr_name = f"{band} {kind}".strip()
+        self._attr_translation_key = "guest_wifi" if iface.get("guest") else "wifi"
+        self._attr_translation_placeholders = {"band": band}
         self._attr_icon = "mdi:wifi-lock" if iface.get("guest") else "mdi:wifi"
         self._attr_unique_id = f"{entry.entry_id}_wifi_{self._iface_name}"
 

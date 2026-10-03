@@ -15,6 +15,14 @@
         "data": {
           "password": "Admin password"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure GL.iNet router",
+        "description": "Update the router's address or admin password.",
+        "data": {
+          "host": "Host",
+          "password": "Admin password"
+        }
       }
     },
     "error": {
@@ -24,7 +32,9 @@
     },
     "abort": {
       "already_configured": "This router is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful.",
+      "unique_id_mismatch": "The router at this address is a different device than the one originally configured."
     }
   },
   "options": {
@@ -39,6 +49,248 @@
         "data_description": {
           "scan_interval": "How often to poll dynamic status (connectivity, clients, VPN/repeater state).",
           "config_scan_interval": "How often to re-read rarely-changing config (Wi-Fi, mode, LED, Tor). Edits made from Home Assistant still refresh immediately."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "uptime": {
+        "name": "Uptime"
+      },
+      "cpu_temperature": {
+        "name": "CPU Temperature"
+      },
+      "load_average": {
+        "name": "Load Average"
+      },
+      "memory_used": {
+        "name": "Memory Used"
+      },
+      "connected_clients": {
+        "name": "Connected Clients"
+      },
+      "wan_public_ip": {
+        "name": "WAN IP"
+      },
+      "wan_interface": {
+        "name": "WAN Interface"
+      },
+      "vpn_client_profile": {
+        "name": "VPN Client Profile"
+      },
+      "operating_mode": {
+        "name": "Operating Mode"
+      },
+      "repeater_ssid": {
+        "name": "Repeater Upstream SSID"
+      },
+      "repeater_signal": {
+        "name": "Repeater Signal"
+      },
+      "repeater_state": {
+        "name": "Repeater State"
+      },
+      "modem_state": {
+        "name": "Modem State"
+      },
+      "modem_signal": {
+        "name": "Modem Signal"
+      },
+      "last_boot": {
+        "name": "Last Boot"
+      }
+    },
+    "binary_sensor": {
+      "internet": {
+        "name": "Internet"
+      },
+      "wan": {
+        "name": "WAN"
+      },
+      "wifi_2g": {
+        "name": "2.4 GHz Wi-Fi"
+      },
+      "wifi_5g": {
+        "name": "5 GHz Wi-Fi"
+      },
+      "guest_wifi": {
+        "name": "Guest Wi-Fi"
+      },
+      "vpn_client": {
+        "name": "VPN Client"
+      },
+      "tailscale": {
+        "name": "Tailscale"
+      },
+      "repeater": {
+        "name": "Repeater"
+      },
+      "cable": {
+        "name": "WAN Cable"
+      },
+      "tethering": {
+        "name": "USB Tethering"
+      },
+      "ddns": {
+        "name": "Dynamic DNS"
+      },
+      "modem": {
+        "name": "Cellular Modem"
+      }
+    },
+    "switch": {
+      "led": {
+        "name": "LEDs"
+      },
+      "wireguard_server": {
+        "name": "WireGuard Server"
+      },
+      "openvpn_server": {
+        "name": "OpenVPN Server"
+      },
+      "tailscale": {
+        "name": "Tailscale"
+      },
+      "tor": {
+        "name": "Tor"
+      },
+      "vpn_client": {
+        "name": "VPN Client"
+      },
+      "repeater": {
+        "name": "Repeater"
+      },
+      "wifi": {
+        "name": "{band} Wi-Fi"
+      },
+      "guest_wifi": {
+        "name": "{band} Guest Wi-Fi"
+      }
+    },
+    "select": {
+      "vpn_client": {
+        "name": "VPN Client"
+      },
+      "repeater_network": {
+        "name": "Repeater Network"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Reboot"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    }
+  },
+  "services": {
+    "block_client": {
+      "name": "Block client",
+      "description": "Block or unblock a client device by MAC address.",
+      "fields": {
+        "device_id": {
+          "name": "Router",
+          "description": "The GL.iNet router to act on."
+        },
+        "mac": {
+          "name": "MAC address",
+          "description": "The client's MAC address."
+        },
+        "blocked": {
+          "name": "Blocked",
+          "description": "Whether the client should be blocked."
+        }
+      }
+    },
+    "connect_repeater": {
+      "name": "Connect repeater",
+      "description": "Connect the router (in repeater mode) to an upstream Wi-Fi network.",
+      "fields": {
+        "device_id": {
+          "name": "Router",
+          "description": "The GL.iNet router to act on."
+        },
+        "ssid": {
+          "name": "SSID",
+          "description": "The upstream network SSID to join."
+        },
+        "password": {
+          "name": "Password",
+          "description": "The upstream network password (leave blank for open networks)."
+        },
+        "identity": {
+          "name": "Identity",
+          "description": "Username for WPA-Enterprise (802.1X) networks. Leave blank otherwise."
+        },
+        "bssid": {
+          "name": "BSSID",
+          "description": "Target a specific access point by BSSID (from a scan_repeater result) when several nearby networks share the same SSID. Leave blank otherwise."
+        }
+      }
+    },
+    "scan_repeater": {
+      "name": "Scan for repeater networks",
+      "description": "Scan for nearby Wi-Fi networks the router can join as a repeater. Returns the list of networks (SSID, BSSID, band, channel, signal, encryption).",
+      "fields": {
+        "device_id": {
+          "name": "Router",
+          "description": "The GL.iNet router to act on."
+        }
+      }
+    },
+    "set_mode": {
+      "name": "Set operating mode",
+      "description": "Switch the router's working mode. WARNING: disruptive — changing to Access Point can change the router's IP and briefly drop connectivity.",
+      "fields": {
+        "device_id": {
+          "name": "Router",
+          "description": "The GL.iNet router to act on."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "The working mode to switch to."
+        },
+        "confirm": {
+          "name": "Confirm",
+          "description": "Must be true to proceed — guards against accidental mode changes."
+        }
+      }
+    },
+    "set_wifi": {
+      "name": "Set Wi-Fi",
+      "description": "Update a Wi-Fi interface's SSID, password, security, or enabled state.",
+      "fields": {
+        "device_id": {
+          "name": "Router",
+          "description": "The GL.iNet router to act on."
+        },
+        "iface_name": {
+          "name": "Interface name",
+          "description": "The Wi-Fi interface to modify (e.g. wifi2g, wifi5g, guest2g, guest5g)."
+        },
+        "ssid": {
+          "name": "SSID",
+          "description": "New SSID for the interface."
+        },
+        "key": {
+          "name": "Key",
+          "description": "New password/key for the interface."
+        },
+        "encryption": {
+          "name": "Security",
+          "description": "Wi-Fi security mode. none = open; psk2 = WPA2-PSK; sae = WPA3-SAE; psk-mixed = WPA2/WPA3; sae-mixed = WPA3/WPA2 transition."
+        },
+        "hidden": {
+          "name": "Hidden",
+          "description": "Whether to hide the SSID."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether the interface should be enabled."
         }
       }
     }

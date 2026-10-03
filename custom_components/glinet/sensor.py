@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,12 +15,14 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfTemperature,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from . import GlinetConfigEntry, parsers
 from .coordinator import GlinetDataUpdateCoordinator
@@ -40,7 +43,7 @@ class GlinetSensorDescription(SensorEntityDescription):
 SENSORS: tuple[GlinetSensorDescription, ...] = (
     GlinetSensorDescription(
         key="uptime",
-        name="Uptime",
+        translation_key="uptime",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
@@ -50,7 +53,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="cpu_temperature",
-        name="CPU Temperature",
+        translation_key="cpu_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -60,7 +63,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="load_average",
-        name="Load Average",
+        translation_key="load_average",
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=2,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -69,7 +72,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="memory_used",
-        name="Memory Used",
+        translation_key="memory_used",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -78,27 +81,27 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="connected_clients",
-        name="Connected Clients",
+        translation_key="connected_clients",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:devices",
         value_fn=parsers.client_count,
     ),
     GlinetSensorDescription(
         key="wan_public_ip",
-        name="WAN IP",
+        translation_key="wan_public_ip",
         icon="mdi:ip-network",
         value_fn=parsers.wan_public_ip,
     ),
     GlinetSensorDescription(
         key="wan_interface",
-        name="WAN Interface",
+        translation_key="wan_interface",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:transit-connection-variant",
         value_fn=lambda data: parsers.active_wan_interface(data.get("status", {})),
     ),
     GlinetSensorDescription(
         key="vpn_client_profile",
-        name="VPN Client Profile",
+        translation_key="vpn_client_profile",
         icon="mdi:vpn",
         value_fn=lambda data: parsers.vpn_client_active_name(
             data.get("configs", {}).get("vpn_client")
@@ -106,7 +109,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="operating_mode",
-        name="Operating Mode",
+        translation_key="operating_mode",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:router-wireless-settings",
         value_fn=lambda data: parsers.operating_mode(
@@ -115,7 +118,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="repeater_ssid",
-        name="Repeater Upstream SSID",
+        translation_key="repeater_ssid",
         icon="mdi:wifi-arrow-up-down",
         requires_config="repeater",
         value_fn=lambda data: parsers.repeater_upstream_ssid(
@@ -124,9 +127,9 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="repeater_signal",
-        name="Repeater Signal",
+        translation_key="repeater_signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement="dBm",
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -137,7 +140,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="repeater_state",
-        name="Repeater State",
+        translation_key="repeater_state",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:wifi-arrow-up-down",
         requires_config="repeater",
@@ -147,7 +150,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="modem_state",
-        name="Modem State",
+        translation_key="modem_state",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:signal",
         requires_config="modem",
@@ -157,9 +160,9 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     ),
     GlinetSensorDescription(
         key="modem_signal",
-        name="Modem Signal",
+        translation_key="modem_signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement="dBm",
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         requires_config="modem",
@@ -190,9 +193,11 @@ async def async_setup_entry(
             return False
         return True
 
-    async_add_entities(
+    entities: list[SensorEntity] = [
         GlinetSensor(coordinator, entry, desc) for desc in SENSORS if _included(desc)
-    )
+    ]
+    entities.append(GlinetLastBootSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class GlinetSensor(GlinetEntity, SensorEntity):
@@ -217,3 +222,34 @@ class GlinetSensor(GlinetEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class GlinetLastBootSensor(GlinetEntity, SensorEntity):
+    """Timestamp of the router's last boot (uptime subtracted from now)."""
+
+    _attr_translation_key = "last_boot"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: GlinetDataUpdateCoordinator,
+        entry: GlinetConfigEntry,
+    ) -> None:
+        """Initialize the last boot sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_last_boot"
+        self._boot: datetime | None = None
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the boot time, only moving it when it drifts by more than 5 s."""
+        if self.coordinator.data is None:
+            return self._boot
+        seconds = parsers.uptime(self.coordinator.data.get("status", {}))
+        if seconds is None:
+            return self._boot
+        new = parsers.boot_time(seconds, dt_util.utcnow())
+        if self._boot is None or abs(new - self._boot) > timedelta(seconds=5):
+            self._boot = new
+        return self._boot

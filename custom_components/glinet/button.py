@@ -35,7 +35,7 @@ async def async_setup_entry(
 class GlinetRebootButton(GlinetEntity, ButtonEntity):
     """Reboot the router."""
 
-    _attr_name = "Reboot"
+    _attr_translation_key = "reboot"
     _attr_device_class = ButtonDeviceClass.RESTART
 
     def __init__(

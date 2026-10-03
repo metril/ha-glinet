@@ -198,7 +198,7 @@ async def test_info_refresh_failure_backs_off_and_updates_registry():
 
     registry = MagicMock()
     device = SimpleNamespace(id="dev")
-    registry.async_get_device.return_value = device
+    registry.async_get_device_by_identifier.return_value = device
     dr.async_get.return_value = registry
 
     async def newer():

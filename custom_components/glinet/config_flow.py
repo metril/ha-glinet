@@ -21,6 +21,9 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
 from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError, GlinetError
@@ -42,6 +45,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+_PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
 
 async def _validate(hass, host: str, password: str) -> dict[str, Any]:
@@ -108,7 +113,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_HOST, default=DEFAULT_HOST): str,
-                    vol.Required(CONF_PASSWORD): str,
+                    vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
                 }
             ),
             errors=errors,
@@ -148,7 +153,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR}),
             errors=errors,
         )
 
@@ -172,7 +177,21 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected error validating GL.iNet router")
                 errors["base"] = "unknown"
             else:
-                await self.async_set_unique_id(_unique_id_from_info(info, host))
+                new_uid = _unique_id_from_info(info, host)
+                old_uid = entry.unique_id
+                legacy = (
+                    old_uid is None
+                    or old_uid == str(entry.data.get(CONF_HOST, "")).lower()
+                    or dr.format_mac(old_uid) != old_uid
+                    or len(old_uid) != 17
+                )
+                await self.async_set_unique_id(new_uid)
+                if legacy:
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        unique_id=new_uid,
+                        data_updates={CONF_HOST: host, CONF_PASSWORD: password},
+                    )
                 self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     entry,
@@ -186,9 +205,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_HOST, default=entry.data.get(CONF_HOST, DEFAULT_HOST)
                     ): str,
-                    vol.Required(
-                        CONF_PASSWORD, default=entry.data.get(CONF_PASSWORD, "")
-                    ): str,
+                    vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
                 }
             ),
             errors=errors,

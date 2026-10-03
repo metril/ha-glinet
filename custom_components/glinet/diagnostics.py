@@ -11,6 +11,9 @@ from . import GlinetConfigEntry
 
 TO_REDACT = {
     "password",
+    "sn_bak",
+    "device_id",
+    "cert",
     "key",
     "sid",
     "mac",

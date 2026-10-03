@@ -57,7 +57,7 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 
 ## v0.8.0 notes (HA 2026.9+ modernization)
 
-- **Minimum HA 2026.9, Python 3.14.** HA dropped `voluptuous`; use **`probatio`**
+- **Minimum HA 2026.9, Python 3.14.** HA 2026.9 validates with probatio and `voluptuous` is no longer a guaranteed dependency, so use **`probatio`**
   (`import probatio as vol`-style) in `config_flow.py`/`services.py`. CI (tests +
   import-smoke) runs on Python 3.14 with `homeassistant>=2026.9`.
 - State lives in **`entry.runtime_data`** (`GlinetConfigEntry` = `ConfigEntry[coordinator]`),
@@ -67,7 +67,9 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   messages live under `exceptions` in `strings.json` (identical copy in
   `translations/en.json`; keep them `cmp`-equal). Entities use `translation_key`s.
 - **Coordinator probe/retry/backoff:** first cycle probes each optional read; a
-  `GlinetApiError` *only then* marks it unsupported (never polled again). Later
+  `GlinetApiError` *only then* marks a FAST/CONFIG read unsupported (never polled again);
+  `_SLOW_READS` (firmware check hits GL.iNet's cloud) are exempt: a first-run error keeps
+  them supported and retries with the <=300 s backoff. Later
   errors keep the last good value; a fast read is **dropped (entity unknown) after 3
   consecutive failures**. Throttled (config/slow) reads serve cache on error and retry
   within <=5 min (`_RETRY_BACKOFF`), important for `upgrade.check_firmware_online`
@@ -82,7 +84,7 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - **Reconfigure flow** (`async_step_reconfigure`): update host/password; unique id (the
   formatted MAC) must match (`_abort_if_unique_id_mismatch`). Legacy non-normalized MAC
   unique ids are migrated in `async_setup_entry`.
-- Device trackers: unique id is the client MAC (`ScannerEntity` contract), enabled by
+- Device trackers: unique id is the client MAC (`ScannerEntity` contract; if two GL.iNet entries see the same client only the first creates a tracker and HA logs the duplicate), enabled by
   default (property override, since `ScannerEntity` defines it as a property).
 - Tests: `tests/test_coordinator.py` uses the conftest HA stubs (skipped under real HA).
 

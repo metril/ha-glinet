@@ -196,7 +196,8 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         GlinetSensor(coordinator, entry, desc) for desc in SENSORS if _included(desc)
     ]
-    entities.append(GlinetLastBootSensor(coordinator, entry))
+    if parsers.uptime(data.get("status", {})) is not None:
+        entities.append(GlinetLastBootSensor(coordinator, entry))
     async_add_entities(entities)
 
 

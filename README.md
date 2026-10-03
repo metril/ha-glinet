@@ -10,8 +10,9 @@ GL-MT6000, GL-AXT1800, GL-AX1800, GL-A1300, and similar) from Home Assistant.
 
 Local polling, UI config flow, no cloud, no third-party Python dependencies.
 
-**Requires Home Assistant 2026.9 or newer** (which uses `probatio` in place of
-`voluptuous`, and Python 3.14).
+**Requires Home Assistant 2026.9 or newer** (which validates with `probatio`;
+`voluptuous` is no longer a guaranteed dependency, so this integration uses `probatio`;
+Python 3.14).
 
 ## Features
 
@@ -85,8 +86,9 @@ the next poll. (Install is only available when an update is actually offered.)
 ### Device trackers
 
 One tracker is created per client the router reports. As required by Home Assistant's
-`ScannerEntity` contract, the **unique id is the client's MAC address**, so the same
-client seen by two routers is a single entity. Trackers are **enabled by default**; turn
+`ScannerEntity` contract, the **unique id is the client's MAC address**, so if two
+GL.iNet entries see the same client, only the first creates a tracker and HA logs the
+duplicate. Trackers are **enabled by default**; turn
 them off entirely with the *Device trackers* option in **Configure**.
 
 ### Diagnostics

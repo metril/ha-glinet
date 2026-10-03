@@ -226,8 +226,8 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         new_fw = new_info.get("firmware_version")
         if new_fw and new_fw != old_fw:
             registry = dr.async_get(self.hass)
-            device = registry.async_get_device(
-                identifiers={(DOMAIN, self.config_entry.entry_id)}
+            device = registry.async_get_device_by_identifier(
+                (DOMAIN, self.config_entry.entry_id), self.config_entry.entry_id
             )
             if device is not None:
                 registry.async_update_device(device.id, sw_version=new_fw)
@@ -319,10 +319,14 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except (GlinetConnectionError, GlinetAuthError):
                     raise
                 except GlinetApiError as err:
-                    if first_run:
+                    if first_run and reads is not _SLOW_READS:
                         _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
                         self._supported[key] = False
                         continue
+                    if first_run:
+                        # Slow reads hit GL.iNet's cloud: a transient failure is not
+                        # proof of "unsupported"; keep polling with backoff.
+                        self._supported[key] = True
                     _LOGGER.debug(
                         "Read %s.%s failed, serving cached value: %s", service, method, err
                     )

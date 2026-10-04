@@ -3,20 +3,42 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.8.0); creates tag v<version> and the GitHub release"
+        required: true
+        type: string
+      notes:
+        description: "Release notes (Markdown). Leave empty to auto-generate."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Update manifest version
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          jq --arg v "$VERSION" '.version = $v' custom_components/glinet/manifest.json > tmp.json
+          jq --arg v "${{ steps.v.outputs.version }}" '.version = $v' custom_components/glinet/manifest.json > tmp.json
           mv tmp.json custom_components/glinet/manifest.json
 
       - name: Create release ZIP
@@ -24,12 +46,22 @@ jobs:
           cd custom_components/glinet
           zip -r ../../glinet.zip .
 
+      - name: Create release (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          if [ -n "${{ inputs.notes }}" ]; then
+            printf '%s\n' "${{ inputs.notes }}" > notes.md
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
+
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./glinet.zip
-          asset_name: glinet.zip
-          asset_content_type: application/zip
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="v${{ steps.v.outputs.version }}"
+          fi
+          gh release upload "$TAG" glinet.zip --clobber

@@ -10,6 +10,10 @@ GL-MT6000, GL-AXT1800, GL-AX1800, GL-A1300, and similar) from Home Assistant.
 
 Local polling, UI config flow, no cloud, no third-party Python dependencies.
 
+**Requires Home Assistant 2026.9 or newer** (which validates with `probatio`;
+`voluptuous` is no longer a guaranteed dependency, so this integration uses `probatio`;
+Python 3.14).
+
 ## Features
 
 | Type | Entities |
@@ -17,9 +21,9 @@ Local polling, UI config flow, no cloud, no third-party Python dependencies.
 | **Switches** | **Wi-Fi radios** (2.4/5 GHz + guest, on/off), **VPN client** (on/off), **Repeater** (on/off), **Tor**, router LEDs, WireGuard/OpenVPN server, Tailscale |
 | **Select** | **VPN client** (which profile), **Repeater network** (which saved upstream) |
 | **Button** | Reboot |
-| **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
+| **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, **last boot** (timestamp), VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
 | **Binary sensors** | Internet, WAN, 2.4/5 GHz & guest Wi-Fi, VPN client, Tailscale, repeater, WAN cable, USB tethering, Dynamic DNS, cellular modem |
-| **Device trackers** | One per connected client (home/away presence) |
+| **Device trackers** | One per connected client (home/away presence); see below |
 | **Update** | Firmware — shows when a newer firmware is offered and installs it (one-click online upgrade) |
 | **Services** | `glinet.block_client`, `glinet.scan_repeater`, `glinet.connect_repeater`, `glinet.set_wifi`, `glinet.set_mode` |
 
@@ -79,6 +83,27 @@ and **reboots to flash it, keeping your settings**. The router is offline for a 
 minutes and this integration shows unavailable until it returns; the entity catches up on
 the next poll. (Install is only available when an update is actually offered.)
 
+### Device trackers
+
+One tracker is created per client the router reports. As required by Home Assistant's
+`ScannerEntity` contract, the **unique id is the client's MAC address**, so if two
+GL.iNet entries see the same client, only the first creates a tracker and HA logs the
+duplicate. Trackers are **enabled by default**; turn
+them off entirely with the *Device trackers* option in **Configure**.
+
+### Diagnostics
+
+**Settings → Devices & Services → GL.iNet Router → ⋮ → Download diagnostics** produces a
+redacted dump (passwords, session ids, MACs, IPs, SSIDs, hostnames, keys and similar are
+removed) with the config options, device info, last polled data and which optional reads
+the router supports. Attach it to bug reports.
+
+### Reconfigure
+
+If the router's address or admin password changes, use **⋮ → Reconfigure** on the
+integration to update them without removing it. It must be the same router (matched by
+MAC); a different router is rejected.
+
 ### Polling
 
 Dynamic status (connectivity, clients, VPN/repeater state) polls on the **Polling
@@ -89,7 +114,7 @@ Any change you make from Home Assistant refreshes its own data immediately regar
 ## Installation (HACS)
 
 1. In HACS → **Integrations** → ⋮ → **Custom repositories**, add
-   `https://github.com/jpranathar/ha-glinet` with category **Integration**.
+   `https://github.com/metril/ha-glinet` with category **Integration**.
 2. Install **GL.iNet Router** and restart Home Assistant.
 3. **Settings → Devices & Services → Add Integration → GL.iNet Router**.
 4. Enter the router address (default `192.168.8.1`) and your **admin password**.
@@ -100,6 +125,9 @@ After setup, open the integration's **Configure** dialog to adjust:
 
 - **Polling interval** (default 30s; the router UI itself polls ~5s if you want
   snappier updates, at a little extra router CPU).
+- **Config refresh interval** (default 5 min) — how often rarely-changing settings
+  (Wi-Fi, mode, LED, Tor, DDNS) are re-read; edits made from Home Assistant refresh
+  immediately regardless.
 - **Device trackers** — enable/disable per-client presence entities.
 
 ## How it works

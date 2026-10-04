@@ -16,6 +16,7 @@ from custom_components.glinet.api import (
     GlinetApiClient,
     GlinetApiError,
     GlinetAuthError,
+    GlinetConnectionError,
 )
 from custom_components.glinet.crypt_util import crypt_password
 
@@ -32,6 +33,8 @@ class _FakeResp:
         return False
 
     async def json(self, content_type=None):
+        if isinstance(self._body, Exception):
+            raise self._body
         return self._body
 
 
@@ -155,3 +158,46 @@ async def test_get_clients_unwraps_list():
     client = GlinetApiClient(session, "host", "pw")
     clients = await client.get_clients()
     assert clients == [{"mac": "aa", "online": True}]
+
+
+@pytest.mark.asyncio
+async def test_non_json_body_raises_connection_error():
+    client = GlinetApiClient(_FakeSession([ValueError("bad json")]), "h", "pw")
+    with pytest.raises(GlinetConnectionError):
+        await client._rpc("challenge", {})
+
+
+@pytest.mark.asyncio
+async def test_non_dict_body_raises_connection_error():
+    client = GlinetApiClient(_FakeSession([["not", "a", "dict"]]), "h", "pw")
+    with pytest.raises(GlinetConnectionError):
+        await client._rpc("challenge", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "exc"),
+    [
+        (502, GlinetConnectionError),
+        (503, GlinetConnectionError),
+        (401, GlinetAuthError),
+        (403, GlinetAuthError),
+        (404, GlinetApiError),
+    ],
+)
+async def test_http_status_mapping(status, exc):
+    client = GlinetApiClient(_FakeSession([{}], status=status), "h", "pw")
+    with pytest.raises(exc):
+        await client._rpc("challenge", {})
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("192.168.8.1", "http://192.168.8.1"),
+        ("https://router.lan/", "https://router.lan"),
+        ("http://10.0.0.1:8080", "http://10.0.0.1:8080"),
+    ],
+)
+def test_base_url(host, expected):
+    assert GlinetApiClient(MagicMock(), host, "pw").base_url == expected

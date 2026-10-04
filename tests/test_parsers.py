@@ -398,3 +398,12 @@ def test_wifi_band_and_guest():
     assert parsers.guest_wifi_up(status) is True
     assert parsers.wifi_band_up({}, "2G", False) is None
     assert parsers.guest_wifi_up({"wifi": [{"band": "2G", "guest": False, "up": True}]}) is None
+
+
+def test_boot_time():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
+    assert parsers.boot_time(3600, now) == now - timedelta(hours=1)
+    assert parsers.boot_time(0, now) == now
+    assert parsers.boot_time(10053.55, now) == now - timedelta(seconds=10053.55)

@@ -15,6 +15,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -34,6 +35,7 @@ from .const import (
     DATA_STATUS,
     DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
     SVC_CABLE,
     SVC_DDNS,
     SVC_LED,
@@ -83,6 +85,10 @@ _SLOW_READS: tuple[tuple[str, str, str], ...] = (
     ("firmware", SVC_UPGRADE, "check_firmware_online"),
 )
 _SLOW_READ_INTERVAL = timedelta(hours=6)
+# Consecutive fast-read failures before the last good value is dropped.
+_MAX_FAST_FAILURES = 3
+# A failed throttled read is retried within this many seconds.
+_RETRY_BACKOFF = 300
 
 
 def parse_features(info: dict[str, Any]) -> set[str]:
@@ -128,6 +134,10 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Throttled-read caches: last value + monotonic timestamp of last fetch.
         self._slow_cache: dict[str, Any] = {}
         self._slow_last: dict[str, float] = {}
+        # Last good value per fast read, served when a later cycle errors.
+        self._last_fast: dict[str, Any] = {}
+        self._fast_failures: dict[str, int] = {}
+        self._info_last: float | None = None
 
         # Shared UI state (not from the router): the chosen VPN target and the
         # chosen repeater target (a saved-network label, see select/switch).
@@ -137,6 +147,7 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"GL.iNet {entry.title}",
             update_interval=timedelta(seconds=scan_interval),
         )
@@ -156,6 +167,11 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._info
 
     @property
+    def supported_reads(self) -> dict[str, bool]:
+        """Return which optional reads the router supports (empty before first probe)."""
+        return dict(self._supported or {})
+
+    @property
     def features(self) -> set[str]:
         """Return the set of detected feature flags."""
         return self._features
@@ -163,10 +179,15 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch status + clients (and info on first run)."""
         try:
-            # system.get_info is largely static — fetch once and cache.
-            if not self._info:
+            # system.get_info is largely static — fetch once, then refresh on the slow
+            # tier so a firmware upgrade is reflected in the device registry.
+            now = self.hass.loop.time()
+            if self._info_last is None:
                 self._info = await self.client.get_info()
                 self._features = parse_features(self._info)
+                self._info_last = now
+            elif now - self._info_last >= _SLOW_READ_INTERVAL.total_seconds():
+                await self._refresh_info(now)
 
             status = await self.client.get_status()
             clients = await self.client.get_clients()
@@ -186,12 +207,38 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             DATA_CONFIGS: configs,
         }
 
+    async def _refresh_info(self, now: float) -> None:
+        """Re-fetch ``system.get_info``; push a changed firmware version to the registry."""
+        try:
+            new_info = await self.client.get_info()
+        except (GlinetConnectionError, GlinetAuthError):
+            raise
+        except GlinetApiError as err:
+            _LOGGER.debug("Refreshing system.get_info failed: %s", err)
+            self._info_last = now
+            return
+        self._info_last = now
+        if not new_info:
+            return
+        old_fw = self._info.get("firmware_version")
+        self._info = new_info
+        self._features = parse_features(new_info)
+        new_fw = new_info.get("firmware_version")
+        if new_fw and new_fw != old_fw:
+            registry = dr.async_get(self.hass)
+            device = registry.async_get_device_by_identifier(
+                (DOMAIN, self.config_entry.entry_id), self.config_entry.entry_id
+            )
+            if device is not None:
+                registry.async_update_device(device.id, sw_version=new_fw)
+
     async def _fetch_optional(self) -> dict[str, Any]:
         """Poll the tiered control-surface reads, probing support on first run.
 
         FAST reads run every cycle; CONFIG reads run at the config interval; SLOW
-        reads at a fixed long interval. A connection/auth failure propagates; any
-        other RPC error marks that service unsupported so it is skipped next time.
+        reads at a fixed long interval. A connection/auth failure propagates. An RPC
+        error on the first (probe) cycle marks that service unsupported; on later
+        cycles it is only logged and the read is retried next cycle.
         """
         first_run = self._supported is None
         if first_run:
@@ -227,11 +274,28 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except GlinetApiError as err:
             if first_run:
                 _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
-            self._supported[key] = False
+                self._supported[key] = False
+            else:
+                failures = self._fast_failures.get(key, 0) + 1
+                self._fast_failures[key] = failures
+                if failures >= _MAX_FAST_FAILURES:
+                    _LOGGER.debug(
+                        "Read %s.%s failed %d times, dropping last value: %s",
+                        service, method, failures, err,
+                    )
+                    self._last_fast.pop(key, None)
+                else:
+                    _LOGGER.debug(
+                        "Read %s.%s failed, keeping last value: %s", service, method, err
+                    )
+                    if key in self._last_fast:
+                        configs[key] = self._last_fast[key]
             return
         self._supported[key] = True
+        self._fast_failures.pop(key, None)
         if isinstance(result, dict):
             configs[key] = result
+            self._last_fast[key] = result
 
     async def _fetch_throttled(
         self,
@@ -255,13 +319,22 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except (GlinetConnectionError, GlinetAuthError):
                     raise
                 except GlinetApiError as err:
-                    if first_run:
+                    if first_run and reads is not _SLOW_READS:
                         _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
-                    self._supported[key] = False
-                    continue
-                self._supported[key] = True
-                self._slow_last[key] = now
-                if isinstance(result, dict):
-                    self._slow_cache[key] = result
+                        self._supported[key] = False
+                        continue
+                    if first_run:
+                        # Slow reads hit GL.iNet's cloud: a transient failure is not
+                        # proof of "unsupported"; keep polling with backoff.
+                        self._supported[key] = True
+                    _LOGGER.debug(
+                        "Read %s.%s failed, serving cached value: %s", service, method, err
+                    )
+                    self._slow_last[key] = now - interval + min(interval, _RETRY_BACKOFF)
+                else:
+                    self._supported[key] = True
+                    self._slow_last[key] = now
+                    if isinstance(result, dict):
+                        self._slow_cache[key] = result
             if key in self._slow_cache:
                 configs[key] = self._slow_cache[key]

@@ -11,13 +11,11 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
-from .const import DOMAIN
+from . import GlinetConfigEntry, parsers
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
@@ -36,40 +34,40 @@ class GlinetBinarySensorDescription(BinarySensorEntityDescription):
 BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     GlinetBinarySensorDescription(
         key="internet",
-        name="Internet",
+        translation_key="internet",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda data: parsers.internet_online(data.get("status", {})),
     ),
     GlinetBinarySensorDescription(
         key="wan",
-        name="WAN",
+        translation_key="wan",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda data: parsers.wan_connected(data.get("status", {})),
     ),
     GlinetBinarySensorDescription(
         key="wifi_2g",
-        name="2.4 GHz Wi-Fi",
+        translation_key="wifi_2g",
         device_class=BinarySensorDeviceClass.RUNNING,
         icon="mdi:wifi",
         value_fn=lambda data: parsers.wifi_band_up(data.get("status", {}), "2G", False),
     ),
     GlinetBinarySensorDescription(
         key="wifi_5g",
-        name="5 GHz Wi-Fi",
+        translation_key="wifi_5g",
         device_class=BinarySensorDeviceClass.RUNNING,
         icon="mdi:wifi",
         value_fn=lambda data: parsers.wifi_band_up(data.get("status", {}), "5G", False),
     ),
     GlinetBinarySensorDescription(
         key="guest_wifi",
-        name="Guest Wi-Fi",
+        translation_key="guest_wifi",
         device_class=BinarySensorDeviceClass.RUNNING,
         icon="mdi:wifi-lock",
         value_fn=lambda data: parsers.guest_wifi_up(data.get("status", {})),
     ),
     GlinetBinarySensorDescription(
         key="vpn_client",
-        name="VPN Client",
+        translation_key="vpn_client",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         requires_config="vpn_client",
         value_fn=lambda data: parsers.vpn_client_connected(
@@ -78,7 +76,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="tailscale",
-        name="Tailscale",
+        translation_key="tailscale",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         requires_config="tailscale",
         value_fn=lambda data: parsers.vpn_connected(
@@ -87,7 +85,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="repeater",
-        name="Repeater",
+        translation_key="repeater",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         icon="mdi:wifi-arrow-up-down",
         requires_config="repeater",
@@ -97,7 +95,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="cable",
-        name="WAN Cable",
+        translation_key="cable",
         device_class=BinarySensorDeviceClass.PLUG,
         icon="mdi:ethernet-cable",
         requires_config="cable",
@@ -107,7 +105,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="tethering",
-        name="USB Tethering",
+        translation_key="tethering",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         icon="mdi:usb",
         requires_config="tethering",
@@ -117,7 +115,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="ddns",
-        name="Dynamic DNS",
+        translation_key="ddns",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:dns",
         requires_config="ddns_config",
@@ -127,7 +125,7 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
     ),
     GlinetBinarySensorDescription(
         key="modem",
-        name="Cellular Modem",
+        translation_key="modem",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         icon="mdi:signal",
         requires_config="modem",
@@ -140,15 +138,16 @@ BINARY_SENSORS: tuple[GlinetBinarySensorDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet binary sensors (gating optional ones on available data)."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     data = coordinator.data or {}
     configs = data.get("configs", {})
 
@@ -174,7 +173,7 @@ class GlinetBinarySensor(GlinetEntity, BinarySensorEntity):
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
         description: GlinetBinarySensorDescription,
     ) -> None:
         """Initialize the binary sensor."""

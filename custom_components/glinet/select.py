@@ -18,29 +18,29 @@ import logging
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
+from . import GlinetConfigEntry, parsers
 from .api import GlinetError
-from .const import DOMAIN, SVC_REPEATER, SVC_VPN_CLIENT
+from .const import SVC_REPEATER, SVC_VPN_CLIENT
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
 
 
+PARALLEL_UPDATES = 1
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet selects for whatever the router exposes."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     configs = (coordinator.data or {}).get("configs", {})
     entities: list[SelectEntity] = []
     if "vpn_client" in configs:
@@ -54,12 +54,12 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
     """Choose which VPN client profile is the target (on/off is the VPN switch)."""
 
     _attr_icon = "mdi:vpn"
-    _attr_name = "VPN Client"
+    _attr_translation_key = "vpn_client"
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the VPN client selector."""
         super().__init__(coordinator, entry)
@@ -132,12 +132,12 @@ class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
     """
 
     _attr_icon = "mdi:wifi-arrow-up-down"
-    _attr_name = "Repeater Network"
+    _attr_translation_key = "repeater_network"
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the repeater-network selector."""
         super().__init__(coordinator, entry)

@@ -5,14 +5,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.update import (
+    UpdateDeviceClass,
+    UpdateEntity,
+    UpdateEntityFeature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
-from .const import DOMAIN, SVC_UPGRADE
+from . import GlinetConfigEntry, parsers
+from .api import GlinetError
+from .const import SVC_UPGRADE
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
@@ -24,28 +28,31 @@ _LOGGER = logging.getLogger(__name__)
 _INSTALL_METHOD = "upgrade_online"
 
 
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the GL.iNet firmware update entity."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     async_add_entities([GlinetFirmwareUpdate(coordinator, entry)])
 
 
 class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
     """Reports available router firmware and performs the online upgrade."""
 
-    _attr_name = "Firmware"
+    _attr_translation_key = "firmware"
+    _attr_device_class = UpdateDeviceClass.FIRMWARE
+    _attr_title = "GL.iNet firmware"
     _attr_supported_features = UpdateEntityFeature.INSTALL
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the firmware update entity."""
         super().__init__(coordinator, entry)
@@ -106,6 +113,6 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
                 {"keep_config": True, "keep_package": True},
                 timeout=120,
             )
-        except Exception as err:  # noqa: BLE001
+        except GlinetError as err:
             raise HomeAssistantError(f"Failed to start firmware upgrade: {err}") from err
         # Do not poll progress: the router reboots to flash and drops the link.

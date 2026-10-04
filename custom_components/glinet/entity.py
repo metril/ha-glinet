@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import GlinetDataUpdateCoordinator
+
+if TYPE_CHECKING:
+    from . import GlinetConfigEntry
 
 
 def _first(info: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -29,7 +31,7 @@ class GlinetEntity(CoordinatorEntity[GlinetDataUpdateCoordinator]):
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the entity."""
         super().__init__(coordinator)
@@ -47,7 +49,7 @@ class GlinetEntity(CoordinatorEntity[GlinetDataUpdateCoordinator]):
             manufacturer=MANUFACTURER,
             model=model,
             sw_version=_first(info, "firmware_version", "version"),
-            configuration_url=f"http://{entry.data['host']}",
+            configuration_url=coordinator.client.base_url,
         )
 
     @property

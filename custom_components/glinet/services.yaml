@@ -1,163 +1,107 @@
 block_client:
-  name: Block client
-  description: Block or unblock a client device by MAC address.
   fields:
     device_id:
-      name: Router
-      description: The GL.iNet router to act on.
       required: true
       selector:
         device:
           integration: glinet
     mac:
-      name: MAC address
-      description: The client's MAC address.
       required: true
       example: "aa:bb:cc:dd:ee:ff"
       selector:
         text:
     blocked:
-      name: Blocked
-      description: Whether the client should be blocked.
       required: true
       selector:
         boolean:
 
 connect_repeater:
-  name: Connect repeater
-  description: Connect the router (in repeater mode) to an upstream Wi-Fi network.
   fields:
     device_id:
-      name: Router
-      description: The GL.iNet router to act on.
       required: true
       selector:
         device:
           integration: glinet
     ssid:
-      name: SSID
-      description: The upstream network SSID to join.
       required: true
       selector:
         text:
     password:
-      name: Password
-      description: The upstream network password (leave blank for open networks).
       required: false
       selector:
         text:
     identity:
-      name: Identity
-      description: Username for WPA-Enterprise (802.1X) networks. Leave blank otherwise.
       required: false
       selector:
         text:
     bssid:
-      name: BSSID
-      description: >-
-        Target a specific access point by BSSID (from a scan_repeater result) when
-        several nearby networks share the same SSID. Leave blank otherwise.
       required: false
       example: "aa:bb:cc:dd:ee:ff"
       selector:
         text:
 
 scan_repeater:
-  name: Scan for repeater networks
-  description: >-
-    Scan for nearby Wi-Fi networks the router can join as a repeater. Returns the
-    list of networks (SSID, BSSID, band, channel, signal, encryption).
   fields:
     device_id:
-      name: Router
-      description: The GL.iNet router to act on.
       required: true
       selector:
         device:
           integration: glinet
 
 set_mode:
-  name: Set operating mode
-  description: >-
-    Switch the router's working mode. WARNING: disruptive — changing to Access
-    Point can change the router's IP and briefly drop connectivity.
   fields:
     device_id:
-      name: Router
-      description: The GL.iNet router to act on.
       required: true
       selector:
         device:
           integration: glinet
     mode:
-      name: Mode
-      description: The working mode to switch to.
       required: true
       selector:
         select:
           options:
-            - router
-            - ap
+          - router
+          - ap
     confirm:
-      name: Confirm
-      description: Must be true to proceed — guards against accidental mode changes.
       required: true
       selector:
         boolean:
 
 set_wifi:
-  name: Set Wi-Fi
-  description: Update a Wi-Fi interface's SSID, password, security, or enabled state.
   fields:
     device_id:
-      name: Router
-      description: The GL.iNet router to act on.
       required: true
       selector:
         device:
           integration: glinet
     iface_name:
-      name: Interface name
-      description: The Wi-Fi interface to modify (e.g. wifi2g, wifi5g, guest2g, guest5g).
       required: true
       example: wifi5g
       selector:
         text:
     ssid:
-      name: SSID
-      description: New SSID for the interface.
       required: false
       selector:
         text:
     key:
-      name: Key
-      description: New password/key for the interface.
       required: false
       selector:
         text:
     encryption:
-      name: Security
-      description: >-
-        Wi-Fi security mode. none = open; psk2 = WPA2-PSK; sae = WPA3-SAE;
-        psk-mixed = WPA2/WPA3; sae-mixed = WPA3/WPA2 transition.
       required: false
       selector:
         select:
           options:
-            - none
-            - psk2
-            - psk-mixed
-            - sae
-            - sae-mixed
+          - none
+          - psk2
+          - psk-mixed
+          - sae
+          - sae-mixed
     hidden:
-      name: Hidden
-      description: Whether to hide the SSID.
       required: false
       selector:
         boolean:
     enabled:
-      name: Enabled
-      description: Whether the interface should be enabled.
       required: false
       selector:
         boolean:

@@ -18,15 +18,13 @@ import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import parsers
+from . import GlinetConfigEntry, parsers
 from .api import GlinetError
 from .const import (
-    DOMAIN,
     SVC_LED,
     SVC_OVPN_SERVER,
     SVC_REPEATER,
@@ -63,7 +61,7 @@ class GlinetSwitchDescription(SwitchEntityDescription):
 SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     GlinetSwitchDescription(
         key="led",
-        name="LEDs",
+        translation_key="led",
         config_key="led",
         service=SVC_LED,
         kind="led",
@@ -72,7 +70,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="wireguard_server",
-        name="WireGuard Server",
+        translation_key="wireguard_server",
         config_key="wg_server",
         service=SVC_WG_SERVER,
         kind="vpn",
@@ -81,7 +79,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="openvpn_server",
-        name="OpenVPN Server",
+        translation_key="openvpn_server",
         config_key="ovpn_server",
         service=SVC_OVPN_SERVER,
         kind="vpn",
@@ -90,7 +88,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="tailscale",
-        name="Tailscale",
+        translation_key="tailscale",
         config_key="tailscale",
         service=SVC_TAILSCALE,
         kind="tailscale",
@@ -99,7 +97,7 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
     ),
     GlinetSwitchDescription(
         key="tor",
-        name="Tor",
+        translation_key="tor",
         config_key="tor",
         service=SVC_TOR,
         kind="tor",
@@ -109,15 +107,16 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 1
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet switches for the features this router actually exposes."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     configs = (coordinator.data or {}).get("configs", {})
     entities: list[SwitchEntity] = [
         GlinetSwitch(coordinator, entry, desc)
@@ -159,14 +158,13 @@ class GlinetSwitch(GlinetEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
         description: GlinetSwitchDescription,
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, entry)
         self.entity_description = description
         self._desc = description
-        self._attr_name = description.name
         self._attr_icon = description.icon
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
 
@@ -244,12 +242,12 @@ class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
     """
 
     _attr_icon = "mdi:vpn"
-    _attr_name = "VPN Client"
+    _attr_translation_key = "vpn_client"
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the single VPN on/off switch."""
         super().__init__(coordinator, entry)
@@ -322,12 +320,12 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
     """
 
     _attr_icon = "mdi:wifi-arrow-up-down"
-    _attr_name = "Repeater"
+    _attr_translation_key = "repeater"
 
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
     ) -> None:
         """Initialize the repeater on/off switch."""
         super().__init__(coordinator, entry)
@@ -337,7 +335,7 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
         cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
         return parsers.repeater_saved_option_map(cfg)
 
-    def _status(self) -> dict[str, Any] | None:
+    def _repeater_status(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("repeater")
 
     def _target_entry(self) -> dict[str, Any] | None:
@@ -347,8 +345,8 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
         if target in labels:
             return labels[target]
         # Fall back to the currently-connected network (match by SSID), if saved.
-        if parsers.repeater_connected(self._status()):
-            ssid = parsers.repeater_upstream_ssid(self._status())
+        if parsers.repeater_connected(self._repeater_status()):
+            ssid = parsers.repeater_upstream_ssid(self._repeater_status())
             for entry in labels.values():
                 if entry.get("ssid") == ssid:
                     return entry
@@ -357,7 +355,7 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return whether the repeater is connected to an upstream network."""
-        return parsers.repeater_connected(self._status())
+        return parsers.repeater_connected(self._repeater_status())
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Connect the repeater to the target saved network."""
@@ -397,15 +395,15 @@ class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: GlinetDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: GlinetConfigEntry,
         iface: dict[str, Any],
     ) -> None:
         """Initialize the Wi-Fi switch for an iface."""
         super().__init__(coordinator, entry)
         self._iface_name = iface["iface_name"]
         band = _BAND_LABEL.get(str(iface.get("band")), str(iface.get("band") or ""))
-        kind = "Guest Wi-Fi" if iface.get("guest") else "Wi-Fi"
-        self._attr_name = f"{band} {kind}".strip()
+        self._attr_translation_key = "guest_wifi" if iface.get("guest") else "wifi"
+        self._attr_translation_placeholders = {"band": band}
         self._attr_icon = "mdi:wifi-lock" if iface.get("guest") else "mdi:wifi"
         self._attr_unique_id = f"{entry.entry_id}_wifi_{self._iface_name}"
 
@@ -432,5 +430,4 @@ class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
             raise HomeAssistantError(
                 f"Failed to set Wi-Fi {self._iface_name}: {err}"
             ) from err
-        self.coordinator.invalidate("wifi_config")
         await self.coordinator.async_request_refresh()

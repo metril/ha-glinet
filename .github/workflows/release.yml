@@ -24,6 +24,8 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      # Passed via env so Markdown (backticks, quotes) is never shell-interpreted.
+      RELEASE_NOTES_INPUT: ${{ inputs.notes }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +57,13 @@ jobs:
         run: |
           TAG="${{ steps.v.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping creation."
+            if [ -n "$RELEASE_NOTES_INPUT" ]; then
+              printf '%s\n' "$RELEASE_NOTES_INPUT" > notes.md
+              gh release edit "$TAG" --notes-file notes.md
+              echo "Release $TAG already exists; notes updated."
+            else
+              echo "Release $TAG already exists; skipping creation."
+            fi
             exit 0
           fi
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -64,8 +72,8 @@ jobs:
             else
               gh release create "$TAG" --title "$TAG" --generate-notes
             fi
-          elif [ -n "${{ inputs.notes }}" ]; then
-            printf '%s\n' "${{ inputs.notes }}" > notes.md
+          elif [ -n "$RELEASE_NOTES_INPUT" ]; then
+            printf '%s\n' "$RELEASE_NOTES_INPUT" > notes.md
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
           else
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes

@@ -13,7 +13,13 @@ CONF_HOST: Final = "host"
 CONF_PASSWORD: Final = "password"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_CONFIG_SCAN_INTERVAL: Final = "config_scan_interval"
-CONF_ENABLE_DEVICE_TRACKER: Final = "enable_device_tracker"
+CONF_ENABLE_DEVICE_TRACKER: Final = "enable_device_tracker"  # legacy (<0.9.0), read-only
+CONF_DEVICE_TRACKER_MODE: Final = "device_tracker_mode"
+TRACKER_MODE_OFF: Final = "off"
+TRACKER_MODE_ALL: Final = "all"
+TRACKER_MODE_SELECTED: Final = "selected"
+TRACKER_MODES: Final = (TRACKER_MODE_OFF, TRACKER_MODE_ALL, TRACKER_MODE_SELECTED)
+SUBENTRY_TRACKED_CLIENT: Final = "tracked_client"
 
 # Defaults
 DEFAULT_HOST: Final = "192.168.8.1"

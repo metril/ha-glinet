@@ -44,11 +44,12 @@
         "data": {
           "scan_interval": "Polling interval (seconds)",
           "config_scan_interval": "Config refresh interval (seconds)",
-          "enable_device_tracker": "Create device trackers for connected clients"
+          "device_tracker_mode": "Device trackers"
         },
         "data_description": {
           "scan_interval": "How often to poll dynamic status (connectivity, clients, VPN/repeater state).",
-          "config_scan_interval": "How often to re-read rarely-changing config (Wi-Fi, mode, LED, Tor). Edits made from Home Assistant still refresh immediately."
+          "config_scan_interval": "How often to re-read rarely-changing config (Wi-Fi, mode, LED, Tor). Edits made from Home Assistant still refresh immediately.",
+          "device_tracker_mode": "Off removes all trackers. All clients creates one per client the router reports. Selected clients tracks only the clients you add with Add tracked client on the integration page."
         }
       }
     }
@@ -310,6 +311,41 @@
     },
     "rpc_failed": {
       "message": "The router rejected the request: {error}"
+    }
+  },
+  "config_subentries": {
+    "tracked_client": {
+      "initiate_flow": {
+        "user": "Add tracked client"
+      },
+      "entry_type": "Tracked client",
+      "step": {
+        "user": {
+          "title": "Add tracked client",
+          "description": "Choose a client the router has seen, or type its MAC address. Requires the Device trackers option to be set to Selected clients.",
+          "data": {
+            "mac": "Client"
+          },
+          "data_description": {
+            "mac": "Pick a client or enter a MAC address (AA:BB:CC:DD:EE:FF)."
+          }
+        }
+      },
+      "error": {
+        "invalid_mac": "Enter a valid MAC address."
+      },
+      "abort": {
+        "already_configured": "This client is already tracked."
+      }
+    }
+  },
+  "selector": {
+    "device_tracker_mode": {
+      "options": {
+        "off": "Off",
+        "all": "All clients",
+        "selected": "Selected clients"
+      }
     }
   }
 }

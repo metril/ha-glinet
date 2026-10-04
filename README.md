@@ -23,7 +23,7 @@ Python 3.14).
 | **Button** | Reboot |
 | **Sensors** | Uptime, CPU temperature, load average, memory used %, connected clients, WAN public IP, WAN interface, operating mode, **last boot** (timestamp), VPN client profile, repeater upstream SSID / signal / state, cellular modem state / signal |
 | **Binary sensors** | Internet, WAN, 2.4/5 GHz & guest Wi-Fi, VPN client, Tailscale, repeater, WAN cable, USB tethering, Dynamic DNS, cellular modem |
-| **Device trackers** | One per connected client (home/away presence); see below |
+| **Device trackers** | Per-client home/away presence (all or selected clients); see below |
 | **Update** | Firmware — shows when a newer firmware is offered and installs it (one-click online upgrade) |
 | **Services** | `glinet.block_client`, `glinet.scan_repeater`, `glinet.connect_repeater`, `glinet.set_wifi`, `glinet.set_mode` |
 
@@ -85,11 +85,18 @@ the next poll. (Install is only available when an update is actually offered.)
 
 ### Device trackers
 
-One tracker is created per client the router reports. As required by Home Assistant's
-`ScannerEntity` contract, the **unique id is the client's MAC address**, so if two
-GL.iNet entries see the same client, only the first creates a tracker and HA logs the
-duplicate. Trackers are **enabled by default**; turn
-them off entirely with the *Device trackers* option in **Configure**.
+Choose the mode with the *Device trackers* option in **Configure**:
+
+- **Selected clients** (default for new installs): only clients you add. On the
+  integration page choose **Add tracked client**, pick a seen client (or type a MAC);
+  delete the sub-entry to remove its tracker. Offline clients show `not_home`.
+- **All clients**: one tracker per client the router reports (the pre-0.9 behavior, and
+  the default for upgraders who never changed the option).
+- **Off**: no trackers; existing ones are removed.
+
+As required by Home Assistant's `ScannerEntity` contract, the **unique id is the client's
+MAC address**, so if two GL.iNet entries track the same client, only the first creates a
+tracker and HA logs the duplicate. Trackers are enabled by default.
 
 ### Diagnostics
 
@@ -128,7 +135,7 @@ After setup, open the integration's **Configure** dialog to adjust:
 - **Config refresh interval** (default 5 min) — how often rarely-changing settings
   (Wi-Fi, mode, LED, Tor, DDNS) are re-read; edits made from Home Assistant refresh
   immediately regardless.
-- **Device trackers** — enable/disable per-client presence entities.
+- **Device trackers** — Off / All clients / Selected clients (see above).
 
 ## How it works
 

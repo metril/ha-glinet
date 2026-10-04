@@ -86,6 +86,7 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   unique ids are migrated in `async_setup_entry`.
 - Device trackers: unique id is the client MAC (`ScannerEntity` contract; if two GL.iNet entries see the same client only the first creates a tracker and HA logs the duplicate), enabled by
   default (property override, since `ScannerEntity` defines it as a property).
+- **v0.9.0 tracker modes:** option `device_tracker_mode` = `off|all|selected` (legacy bool `enable_device_tracker` is read as fallback; none set -> `all`; new entries get `selected`). `selected` uses **config subentries** (`tracked_client`, `TrackedClientSubentryFlow`; data `{mac,name}`, unique_id = MAC); trackers are added with `config_subentry_id`, new subentries are picked up via `SIGNAL_CONFIG_ENTRY_CHANGED` (subentry add/remove does not reload the entry), registry entries without a subentry are pruned on setup; `off` removes them.
 - Tests: `tests/test_coordinator.py` uses the conftest HA stubs (skipped under real HA).
 
 ## Auth flow (firmware 4.x)

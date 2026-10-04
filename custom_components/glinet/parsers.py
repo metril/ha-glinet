@@ -10,6 +10,7 @@ given router. Each helper returns ``None`` when nothing matches, so entities sho
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -179,6 +180,26 @@ def _client_online(client: dict[str, Any]) -> bool:
 def client_mac(client: dict[str, Any]) -> str | None:
     mac = client.get("mac") or client.get("macaddr")
     return str(mac).lower() if mac else None
+
+
+def normalize_mac(text: Any) -> str | None:
+    """Return a lowercase colon-separated MAC, or None if ``text`` is not a MAC."""
+    digits = re.sub(r"[\s:.-]", "", str(text or "")).lower()
+    if len(digits) != 12 or any(c not in "0123456789abcdef" for c in digits):
+        return None
+    return ":".join(digits[i : i + 2] for i in range(0, 12, 2))
+
+
+def device_tracker_mode(options: Any) -> str:
+    """Return the tracker mode: new key, else legacy bool, else ``all``."""
+    # Mode strings must match TRACKER_MODE_* in const.py.
+    mode = options.get("device_tracker_mode")
+    if mode in ("off", "all", "selected"):
+        return mode
+    legacy = options.get("enable_device_tracker")
+    if legacy is None:
+        return "all"
+    return "all" if legacy else "off"
 
 
 def client_name(client: dict[str, Any]) -> str | None:

@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -28,13 +30,14 @@ jobs:
       - name: Resolve version
         id: v
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            VERSION="${{ inputs.version }}"
-          fi
-          VERSION="${VERSION#v}"
+          case "${{ github.event_name }}" in
+            release) TAG="${{ github.event.release.tag_name }}" ;;
+            push) TAG="${{ github.ref_name }}" ;;
+            *) TAG="${{ inputs.version }}" ;;
+          esac
+          VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Update manifest version
         run: |
@@ -46,11 +49,22 @@ jobs:
           cd custom_components/glinet
           zip -r ../../glinet.zip .
 
-      - name: Create release (manual dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      # On `release: published` the release already exists, so only upload.
+      - name: Create release (tag push / manual dispatch)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
-          TAG="v${{ steps.v.outputs.version }}"
-          if [ -n "${{ inputs.notes }}" ]; then
+          TAG="${{ steps.v.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping creation."
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if [ -f RELEASE_NOTES.md ]; then
+              gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
+          elif [ -n "${{ inputs.notes }}" ]; then
             printf '%s\n' "${{ inputs.notes }}" > notes.md
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
           else
@@ -58,10 +72,4 @@ jobs:
           fi
 
       - name: Upload release asset
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG="v${{ steps.v.outputs.version }}"
-          fi
-          gh release upload "$TAG" glinet.zip --clobber
+        run: gh release upload "${{ steps.v.outputs.tag }}" glinet.zip --clobber

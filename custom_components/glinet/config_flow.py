@@ -11,25 +11,31 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentryFlow,
     OptionsFlowWithReload,
+    SubentryFlowResult,
 )
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
-    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
+from . import parsers
 from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError, GlinetError
 from .const import (
     CONF_CONFIG_SCAN_INTERVAL,
-    CONF_ENABLE_DEVICE_TRACKER,
+    CONF_DEVICE_TRACKER_MODE,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
@@ -42,6 +48,9 @@ from .const import (
     MAX_SCAN_INTERVAL,
     MIN_CONFIG_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
+    SUBENTRY_TRACKED_CLIENT,
+    TRACKER_MODE_SELECTED,
+    TRACKER_MODES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +115,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=_title_from_info(info, host),
                     data={CONF_HOST: host, CONF_PASSWORD: password},
+                    options={CONF_DEVICE_TRACKER_MODE: TRACKER_MODE_SELECTED},
                 )
 
         return self.async_show_form(
@@ -217,6 +227,14 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
         """Return the options flow handler."""
         return GlinetOptionsFlow()
 
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return the supported subentry types (tracked clients)."""
+        return {SUBENTRY_TRACKED_CLIENT: TrackedClientSubentryFlow}
+
 
 def _interval_selector(minimum: int, maximum: int) -> NumberSelector:
     return NumberSelector(
@@ -243,7 +261,7 @@ class GlinetOptionsFlow(OptionsFlowWithReload):
                 data={
                     CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
                     CONF_CONFIG_SCAN_INTERVAL: int(user_input[CONF_CONFIG_SCAN_INTERVAL]),
-                    CONF_ENABLE_DEVICE_TRACKER: user_input[CONF_ENABLE_DEVICE_TRACKER],
+                    CONF_DEVICE_TRACKER_MODE: user_input[CONF_DEVICE_TRACKER_MODE],
                 },
             )
 
@@ -265,9 +283,69 @@ class GlinetOptionsFlow(OptionsFlowWithReload):
                         MIN_CONFIG_SCAN_INTERVAL, MAX_CONFIG_SCAN_INTERVAL
                     ),
                     vol.Required(
-                        CONF_ENABLE_DEVICE_TRACKER,
-                        default=opts.get(CONF_ENABLE_DEVICE_TRACKER, True),
-                    ): BooleanSelector(),
+                        CONF_DEVICE_TRACKER_MODE,
+                        default=parsers.device_tracker_mode(opts),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(TRACKER_MODES),
+                            mode=SelectSelectorMode.DROPDOWN,
+                            translation_key=CONF_DEVICE_TRACKER_MODE,
+                        )
+                    ),
                 }
             ),
+        )
+
+
+class TrackedClientSubentryFlow(ConfigSubentryFlow):
+    """Add a router client as a tracked device (one subentry per client)."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Pick a seen client, or type a MAC address."""
+        entry = self._get_entry()
+        errors: dict[str, str] = {}
+        taken = {sub.unique_id for sub in entry.subentries.values()}
+
+        coordinator = getattr(entry, "runtime_data", None)
+        clients = ((getattr(coordinator, "data", None) or {}).get("clients")) or []
+        names: dict[str, str] = {}
+        for client in clients:
+            mac = parsers.normalize_mac(parsers.client_mac(client))
+            if mac and mac not in taken:
+                names[mac] = parsers.client_name(client) or ""
+
+        if user_input is not None:
+            mac = parsers.normalize_mac(user_input["mac"])
+            if mac is None:
+                errors["mac"] = "invalid_mac"
+            else:
+                if mac in taken:
+                    return self.async_abort(reason="already_configured")
+                name = names.get(mac, "")
+                return self.async_create_entry(
+                    title=name or mac,
+                    data={"mac": mac, "name": name},
+                    unique_id=mac,
+                )
+
+        options = [
+            SelectOptionDict(value=mac, label=f"{name} ({mac})" if name else mac)
+            for mac, name in names.items()
+        ]
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("mac"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
         )

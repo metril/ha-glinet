@@ -407,3 +407,23 @@ def test_boot_time():
     assert parsers.boot_time(3600, now) == now - timedelta(hours=1)
     assert parsers.boot_time(0, now) == now
     assert parsers.boot_time(10053.55, now) == now - timedelta(seconds=10053.55)
+
+
+def test_device_tracker_mode():
+    assert parsers.device_tracker_mode({}) == "all"
+    assert parsers.device_tracker_mode({"enable_device_tracker": True}) == "all"
+    assert parsers.device_tracker_mode({"enable_device_tracker": False}) == "off"
+    assert parsers.device_tracker_mode({"device_tracker_mode": "selected"}) == "selected"
+    assert parsers.device_tracker_mode(
+        {"device_tracker_mode": "off", "enable_device_tracker": True}
+    ) == "off"
+    assert parsers.device_tracker_mode({"device_tracker_mode": "bogus"}) == "all"
+
+
+def test_normalize_mac():
+    assert parsers.normalize_mac("AA:BB:CC:00:00:01") == "aa:bb:cc:00:00:01"
+    assert parsers.normalize_mac("aa-bb-cc-00-00-01") == "aa:bb:cc:00:00:01"
+    assert parsers.normalize_mac("aabb.cc00.0001") == "aa:bb:cc:00:00:01"
+    assert parsers.normalize_mac("aabbcc000001") == "aa:bb:cc:00:00:01"
+    for bad in ("", None, "nope", "aa:bb:cc:00:00", "gg:bb:cc:00:00:01"):
+        assert parsers.normalize_mac(bad) is None

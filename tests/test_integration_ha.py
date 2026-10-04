@@ -267,11 +267,13 @@ async def test_options_flow(hass, entry):
     assert result["type"] == "form"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"scan_interval": 60, "config_scan_interval": 300, "enable_device_tracker": True},
+        {"scan_interval": 60, "config_scan_interval": 300, "device_tracker_mode": "selected"},
     )
     await hass.async_block_till_done()
     assert result["type"] == "create_entry"
     assert entry.options["scan_interval"] == 60
+    assert entry.options["device_tracker_mode"] == "selected"
+    assert "enable_device_tracker" not in entry.options
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -314,3 +316,120 @@ async def test_coordinator_resilience(hass, entry, router):
     assert states[0] == first
     assert states[1] == first
     assert states[2] in ("unavailable", "unknown")
+
+
+def _trackers(hass, entry):
+    reg = er.async_get(hass)
+    return {
+        e.unique_id: e
+        for e in er.async_entries_for_config_entry(reg, entry.entry_id)
+        if e.domain == "device_tracker"
+    }
+
+
+async def _setup(hass, router, options=None):
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"host": "192.168.8.1", "password": "x"},
+        unique_id="94:83:c4:00:00:01",
+        title="GL.iNet GL-MT3000",
+        options=options or {},
+    )
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    return config_entry
+
+
+async def _add_client(hass, entry, mac):
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "tracked_client"), context={"source": "user"}
+    )
+    assert result["type"] == "form"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"mac": mac}
+    )
+    await hass.async_block_till_done()
+    return result
+
+
+async def test_subentry_add_duplicate_remove(hass, router):
+    entry = await _setup(hass, router, {"device_tracker_mode": "selected"})
+    assert _trackers(hass, entry) == {}
+
+    result = await _add_client(hass, entry, "AA:BB:CC:00:00:01")
+    assert result["type"] == "create_entry"
+    sub = next(iter(entry.subentries.values()))
+    assert sub.data == {"mac": "aa:bb:cc:00:00:01", "name": "poseidon"}
+    trackers = _trackers(hass, entry)
+    assert list(trackers) == ["aa:bb:cc:00:00:01"]
+    assert trackers["aa:bb:cc:00:00:01"].config_subentry_id == sub.subentry_id
+    assert hass.states.get(trackers["aa:bb:cc:00:00:01"].entity_id).state == "home"
+
+    dup = await _add_client(hass, entry, "aa-bb-cc-00-00-01")
+    assert dup["type"] == "abort"
+    assert dup["reason"] == "already_configured"
+
+    bad = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "tracked_client"), context={"source": "user"}
+    )
+    bad = await hass.config_entries.subentries.async_configure(
+        bad["flow_id"], {"mac": "nope"}
+    )
+    assert bad["errors"] == {"mac": "invalid_mac"}
+
+    entity_id = trackers["aa:bb:cc:00:00:01"].entity_id
+    hass.config_entries.async_remove_subentry(entry, sub.subentry_id)
+    await hass.async_block_till_done()
+    assert _trackers(hass, entry) == {}
+    assert hass.states.get(entity_id) is None
+
+
+async def test_mode_all_ignores_subentries(hass, router):
+    entry = await _setup(hass, router, {"device_tracker_mode": "all"})
+    assert len(_trackers(hass, entry)) == 2
+
+
+async def test_mode_off_prunes(hass, router):
+    entry = await _setup(hass, router)
+    assert len(_trackers(hass, entry)) == 2
+    hass.config_entries.async_update_entry(entry, options={"device_tracker_mode": "off"})
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _trackers(hass, entry) == {}
+
+
+async def test_mode_selected_prunes_to_subentries(hass, router):
+    entry = await _setup(hass, router)
+    assert len(_trackers(hass, entry)) == 2
+    hass.config_entries.async_update_entry(
+        entry, options={"device_tracker_mode": "selected"}
+    )
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _trackers(hass, entry) == {}
+
+    await _add_client(hass, entry, "aa:bb:cc:00:00:02")
+    assert list(_trackers(hass, entry)) == ["aa:bb:cc:00:00:02"]
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert list(_trackers(hass, entry)) == ["aa:bb:cc:00:00:02"]
+
+
+async def test_legacy_bool_fallback(hass, router):
+    entry = await _setup(hass, router, {"enable_device_tracker": False})
+    assert _trackers(hass, entry) == {}
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    key = next(k for k in result["data_schema"].schema if k == "device_tracker_mode")
+    assert key.default() == "off"
+
+
+async def test_options_select_mode(hass, entry):
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"scan_interval": 30, "config_scan_interval": 300, "device_tracker_mode": "off"},
+    )
+    await hass.async_block_till_done()
+    assert entry.options["device_tracker_mode"] == "off"
+    assert _trackers(hass, entry) == {}

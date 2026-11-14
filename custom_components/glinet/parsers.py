@@ -158,8 +158,9 @@ def wan_public_ip(data: dict[str, Any]) -> str | None:
 def client_count(data: dict[str, Any]) -> int | None:
     clients = data.get("clients")
     if isinstance(clients, list):
-        online = [c for c in clients if _client_online(c)]
-        return len(online) if online else len(clients)
+        if any(isinstance(c, dict) and c.get("online") is not None for c in clients):
+            return sum(1 for c in clients if _client_online(c))
+        return len(clients)
     status = data.get("status", {})
     value = first_path(status, "client.online", "client.total", "clients.total")
     try:

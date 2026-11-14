@@ -34,7 +34,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # JSON-RPC error codes the router returns for an expired/invalid session.
 _ACCESS_DENIED_CODES = {-32000, -32002}
-_ACCESS_DENIED_TEXT = ("access denied", "no permission", "invalid session", "login")
 
 
 class GlinetError(Exception):
@@ -127,11 +126,10 @@ class GlinetApiClient:
 
         if "error" in data and data["error"] is not None:
             err = data["error"]
+            if not isinstance(err, dict):
+                raise GlinetApiError(f"Malformed RPC error: {err!r}")
             code = err.get("code")
-            message = str(err.get("message", "")).lower()
-            if code in _ACCESS_DENIED_CODES or any(
-                t in message for t in _ACCESS_DENIED_TEXT
-            ):
+            if code in _ACCESS_DENIED_CODES:
                 raise GlinetAuthError(err.get("message", "Access denied"))
             raise GlinetApiError(f"RPC error {code}: {err.get('message')}")
 
@@ -188,16 +186,19 @@ class GlinetApiClient:
         if self._sid is None:
             await self.async_login()
 
+        sid = self._sid
         try:
             return await self._rpc(
-                "call", [self._sid, service, method, params or {}], timeout
+                "call", [sid, service, method, params or {}], timeout
             )
         except GlinetAuthError:
-            # Session likely expired — re-authenticate once and retry.
+            # Session likely expired — re-authenticate once and retry. Only re-login
+            # if no concurrent caller already replaced the sid that just failed.
             _LOGGER.debug("Session expired, re-authenticating")
             async with self._auth_lock:
-                self._sid = None
-                await self._login()
+                if self._sid == sid:
+                    self._sid = None
+                    await self._login()
             return await self._rpc(
                 "call", [self._sid, service, method, params or {}], timeout
             )

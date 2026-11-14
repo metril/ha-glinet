@@ -201,3 +201,51 @@ async def test_http_status_mapping(status, exc):
 )
 def test_base_url(host, expected):
     assert GlinetApiClient(MagicMock(), host, "pw").base_url == expected
+
+
+@pytest.mark.asyncio
+async def test_login_text_in_message_is_not_auth_error():
+    # Only RPC codes classify auth failures; a stray "login" in the text must not.
+    session = _FakeSession(
+        [
+            _challenge_body(),
+            _login_body(),
+            {"error": {"code": -1, "message": "login service unavailable"}},
+        ]
+    )
+    client = GlinetApiClient(session, "host", "pw")
+    with pytest.raises(GlinetApiError):
+        await client.call("x", "y")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("err", ["boom", ["x"], 5])
+async def test_malformed_error_raises_api_error(err):
+    client = GlinetApiClient(_FakeSession([{"error": err}]), "h", "pw")
+    with pytest.raises(GlinetApiError):
+        await client._rpc("call", [])
+
+
+@pytest.mark.asyncio
+async def test_reauth_skips_login_when_sid_already_replaced():
+    session = _FakeSession(
+        [
+            _challenge_body(),
+            _login_body("OLD"),
+            {"error": {"code": -32000, "message": "Access denied"}},
+            {"result": "ok"},
+        ]
+    )
+    client = GlinetApiClient(session, "host", "pw")
+    orig_post = session.post
+
+    def post(url, json, timeout=None):
+        # A concurrent caller refreshes the sid while our call is in flight.
+        if json["method"] == "call" and json["params"][0] == "OLD":
+            client._sid = "NEWER"
+        return orig_post(url, json, timeout)
+
+    session.post = post
+    assert await client.call("system", "get_status") == "ok"
+    assert [r["method"] for r in session.requests].count("login") == 1
+    assert session.requests[-1]["params"][0] == "NEWER"

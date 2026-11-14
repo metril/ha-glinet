@@ -230,6 +230,17 @@ connection). Treat router→ap as the user's deliberate, disruptive action.
   live-flashed** (would reboot/reflash the router); discovered read-only from the UI's
   own /rpc + the `gl-sdk4-ui-upgrade`/`-home` view bundles via chrome-devtools.
 
+## v0.9.1 semantics
+
+- Auth failures are classified by RPC code (`-32000`/`-32002`) only, never message text;
+  non-JSON → `GlinetConnectionError`, malformed error → `GlinetApiError`; re-login happens
+  only if `_sid` still equals the sid that failed (no thundering re-login).
+- `parsers.client_count`: counts online clients when any client has an `online` field
+  (0 if all offline); all clients only if none carry the field.
+- Services invalidate relevant keys and refresh the coordinator after writes; config-flow
+  validation always logs out and maps unexpected errors to `unknown`.
+- CI: pinned `requirements_test.txt`; sharded `test-shard` jobs + `tests` aggregator.
+
 ## License
 
 MIT. Clean-room — do NOT copy GPL code from python-glinet / gli-py or vendor their

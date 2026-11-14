@@ -27,7 +27,7 @@ jobs:
       # Passed via env so Markdown (backticks, quotes) is never shell-interpreted.
       RELEASE_NOTES_INPUT: ${{ inputs.notes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve version
         id: v

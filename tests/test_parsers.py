@@ -427,3 +427,12 @@ def test_normalize_mac():
     assert parsers.normalize_mac("aabbcc000001") == "aa:bb:cc:00:00:01"
     for bad in ("", None, "nope", "aa:bb:cc:00:00", "gg:bb:cc:00:00:01"):
         assert parsers.normalize_mac(bad) is None
+
+
+def test_client_count_all_offline_is_zero():
+    data = {"clients": [{"mac": "a", "online": False}, {"mac": "b", "online": "0"}]}
+    assert parsers.client_count(data) == 0
+
+
+def test_client_count_no_online_field_counts_all():
+    assert parsers.client_count({"clients": [{"mac": "a"}, {"mac": "b"}]}) == 2

@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     name: HACS Validation
     steps:
-      - uses: actions/checkout@v4
-      - uses: hacs/action@main
+      - uses: actions/checkout@v7
+      - uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
 
@@ -23,19 +23,33 @@ jobs:
     runs-on: ubuntu-latest
     name: Hassfest Validation
     steps:
-      - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
+      - uses: actions/checkout@v7
+      - uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361 # master (pinned)
+
+  test-shard:
+    runs-on: ubuntu-latest
+    name: Unit tests (shard ${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements_test.txt
+      - run: pytest -q -n auto --splits 4 --group ${{ matrix.group }}
 
   tests:
     runs-on: ubuntu-latest
     name: Unit tests
+    needs: test-shard
+    if: always()
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - run: pip install pytest pytest-asyncio aiohttp probatio
-      - run: pytest -q
+      - name: Require all shards to pass
+        run: |
+          [ "${{ needs.test-shard.result }}" = "success" ] || { echo "Shards: ${{ needs.test-shard.result }}"; exit 1; }
 
   import-smoke:
     runs-on: ubuntu-latest
@@ -44,8 +58,8 @@ jobs:
     # so a bad `from homeassistant...` import slips through. Import every platform
     # against a real Home Assistant to catch it.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: pip install "homeassistant>=2026.9"

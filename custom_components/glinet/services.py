@@ -137,7 +137,8 @@ def async_setup_services(hass: HomeAssistant) -> None:
     """Register GL.iNet services (called once from the integration's async_setup)."""
 
     async def _handle_block_client(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         try:
             await client.call(
                 SVC_CLIENTS,
@@ -146,9 +147,11 @@ def async_setup_services(hass: HomeAssistant) -> None:
             )
         except GlinetError as err:
             raise _rpc_failed(err) from err
+        await coordinator.async_request_refresh()
 
     async def _handle_connect_repeater(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         params: dict[str, Any] = {"ssid": call.data["ssid"], "remember": True}
         if call.data.get("password"):
             params["key"] = call.data["password"]
@@ -160,6 +163,8 @@ def async_setup_services(hass: HomeAssistant) -> None:
             await client.call(SVC_REPEATER, "connect", params)
         except GlinetError as err:
             raise _rpc_failed(err) from err
+        coordinator.invalidate("repeater_saved")
+        await coordinator.async_request_refresh()
 
     async def _handle_set_mode(call: ServiceCall) -> None:
         if not call.data.get("confirm"):
@@ -167,11 +172,15 @@ def async_setup_services(hass: HomeAssistant) -> None:
                 translation_domain=DOMAIN,
                 translation_key="confirm_required",
             )
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
         try:
-            await client.call(SVC_NETMODE, "set_mode", {"mode": call.data["mode"]})
+            await coordinator.client.call(
+                SVC_NETMODE, "set_mode", {"mode": call.data["mode"]}
+            )
         except GlinetError as err:
             raise _rpc_failed(err) from err
+        coordinator.invalidate("netmode")
+        await coordinator.async_request_refresh()
 
     async def _handle_scan_repeater(call: ServiceCall) -> ServiceResponse:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
@@ -183,7 +192,8 @@ def async_setup_services(hass: HomeAssistant) -> None:
         return {"networks": parsers.repeater_scan_networks(result)}
 
     async def _handle_set_wifi(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         iface_name = call.data["iface_name"]
         overrides = {
             k: call.data[k]
@@ -209,6 +219,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
             await client.call(SVC_WIFI, "set_config", params)
         except GlinetError as err:
             raise _rpc_failed(err) from err
+        await coordinator.async_request_refresh()
 
     hass.services.async_register(
         DOMAIN, SERVICE_BLOCK_CLIENT, _handle_block_client, schema=BLOCK_CLIENT_SCHEMA

@@ -32,7 +32,7 @@ from homeassistant.helpers.selector import (
 )
 
 from . import parsers
-from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError, GlinetError
+from .api import GlinetApiClient, GlinetAuthError, GlinetConnectionError
 from .const import (
     CONF_CONFIG_SCAN_INTERVAL,
     CONF_DEVICE_TRACKER_MODE,
@@ -62,9 +62,10 @@ async def _validate(hass, host: str, password: str) -> dict[str, Any]:
     """Validate credentials, returning device info. Raises on failure."""
     session = async_get_clientsession(hass)
     client = GlinetApiClient(session=session, host=host, password=password)
-    info = await client.test_connection()
-    await client.async_logout()
-    return info
+    try:
+        return await client.test_connection()
+    finally:
+        await client.async_logout()
 
 
 def _title_from_info(info: dict[str, Any], host: str) -> str:
@@ -106,7 +107,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except GlinetConnectionError:
                 errors["base"] = "cannot_connect"
-            except GlinetError:
+            except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error validating GL.iNet router")
                 errors["base"] = "unknown"
             else:
@@ -151,7 +152,8 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except GlinetConnectionError:
                 errors["base"] = "cannot_connect"
-            except GlinetError:
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error validating GL.iNet router")
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(_unique_id_from_info(info, host))
@@ -183,7 +185,7 @@ class GlinetConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except GlinetConnectionError:
                 errors["base"] = "cannot_connect"
-            except GlinetError:
+            except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error validating GL.iNet router")
                 errors["base"] = "unknown"
             else:

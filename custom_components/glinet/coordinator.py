@@ -8,6 +8,7 @@ integration, this polls on a user-configurable interval.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
 from typing import Any
@@ -15,8 +16,10 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from . import parsers
 from .api import (
     GlinetApiClient,
     GlinetApiError,
@@ -34,6 +37,7 @@ from .const import (
     DATA_STATUS,
     DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
     SVC_CABLE,
     SVC_DDNS,
     SVC_LED,
@@ -57,20 +61,20 @@ _LOGGER = logging.getLogger(__name__)
 #
 # FAST: dynamic status, fetched every poll cycle.
 _FAST_READS: tuple[tuple[str, str, str], ...] = (
-    ("ddns", SVC_DDNS, "get_status"),
     ("vpn_client", SVC_VPN_CLIENT, "get_status"),
-    ("wg_server", SVC_WG_SERVER, "get_status"),
-    ("ovpn_server", SVC_OVPN_SERVER, "get_status"),
     ("tailscale", SVC_TAILSCALE, "get_status"),
     ("repeater", SVC_REPEATER, "get_status"),
     ("cable", SVC_CABLE, "get_status"),
     ("tethering", SVC_TETHERING, "get_status"),
     ("modem", SVC_MODEM, "get_status"),
+    ("wg_server", SVC_WG_SERVER, "get_status"),
+    ("ovpn_server", SVC_OVPN_SERVER, "get_status"),
 )
 
 # CONFIG: rarely changes; polled on the (configurable) config interval. Writes
 # invalidate the relevant key so an edit reflects on the next refresh immediately.
 _CONFIG_READS: tuple[tuple[str, str, str], ...] = (
+    ("ddns", SVC_DDNS, "get_status"),
     ("led", SVC_LED, "get_config"),
     ("ddns_config", SVC_DDNS, "get_config"),
     ("tor", SVC_TOR, "get_config"),
@@ -83,6 +87,8 @@ _SLOW_READS: tuple[tuple[str, str, str], ...] = (
     ("firmware", SVC_UPGRADE, "check_firmware_online"),
 )
 _SLOW_READ_INTERVAL = timedelta(hours=6)
+# Max concurrent RPC reads per refresh (the router's uhttpd is single-threaded-ish).
+_READ_CONCURRENCY = 3
 
 
 def parse_features(info: dict[str, Any]) -> set[str]:
@@ -108,6 +114,8 @@ def parse_features(info: dict[str, Any]) -> set[str]:
 class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator that polls a single GL.iNet router."""
 
+    config_entry: ConfigEntry
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -128,6 +136,8 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Throttled-read caches: last value + monotonic timestamp of last fetch.
         self._slow_cache: dict[str, Any] = {}
         self._slow_last: dict[str, float] = {}
+        # Lowercased MAC -> client dict, rebuilt every update.
+        self.clients_by_mac: dict[str, dict[str, Any]] = {}
 
         # Shared UI state (not from the router): the chosen VPN target and the
         # chosen repeater target (a saved-network label, see select/switch).
@@ -139,6 +149,7 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             name=f"GL.iNet {entry.title}",
             update_interval=timedelta(seconds=scan_interval),
+            config_entry=entry,
         )
 
     def invalidate(self, *keys: str) -> None:
@@ -163,20 +174,27 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch status + clients (and info on first run)."""
         try:
-            # system.get_info is largely static — fetch once and cache.
+            # system.get_info is largely static — fetch once, re-read on the slow tier.
             if not self._info:
                 self._info = await self.client.get_info()
                 self._features = parse_features(self._info)
+                self._slow_last["info"] = self.hass.loop.time()
+            else:
+                await self._refresh_info()
 
             status = await self.client.get_status()
             clients = await self.client.get_clients()
             configs = await self._fetch_optional()
         except GlinetAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except GlinetConnectionError as err:
-            raise UpdateFailed(str(err)) from err
         except GlinetError as err:
             raise UpdateFailed(str(err)) from err
+
+        self.clients_by_mac = {
+            mac: c
+            for c in (clients if isinstance(clients, list) else [])
+            if isinstance(c, dict) and (mac := parsers.client_mac(c))
+        }
 
         return {
             DATA_INFO: self._info,
@@ -186,70 +204,61 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             DATA_CONFIGS: configs,
         }
 
+    async def _refresh_info(self) -> None:
+        """Re-read system.get_info on the slow tier; sync the registry sw_version."""
+        now = self.hass.loop.time()
+        last = self._slow_last.get("info")
+        if last is not None and now - last < _SLOW_READ_INTERVAL.total_seconds():
+            return
+        try:
+            info = await self.client.get_info()
+        except GlinetApiError as err:
+            _LOGGER.debug("system.get_info re-read failed: %s", err)
+            return
+        self._slow_last["info"] = now
+        if not isinstance(info, dict) or not info:
+            return
+        old = self._info.get("firmware_version") or self._info.get("version")
+        new = info.get("firmware_version") or info.get("version")
+        self._info = info
+        self._features = parse_features(info)
+        if new and new != old:
+            registry = dr.async_get(self.hass)
+            device = registry.async_get_device(identifiers={(DOMAIN, self.entry.entry_id)})
+            if device is not None:
+                registry.async_update_device(device.id, sw_version=new)
+
     async def _fetch_optional(self) -> dict[str, Any]:
-        """Poll the tiered control-surface reads, probing support on first run.
+        """Poll the tiered control-surface reads concurrently, probing on first run.
 
         FAST reads run every cycle; CONFIG reads run at the config interval; SLOW
-        reads at a fixed long interval. A connection/auth failure propagates; any
-        other RPC error marks that service unsupported so it is skipped next time.
+        reads at a fixed long interval. Connection/auth failures propagate. On the
+        first run any other RPC error marks that service unsupported (never polled
+        again); on later runs it is just logged and the cached value is kept.
         """
         first_run = self._supported is None
         if first_run:
             self._supported = {}
 
-        configs: dict[str, Any] = {}
-        for key, service, method in _FAST_READS:
-            await self._fetch_one(key, service, method, configs, first_run)
-
-        await self._fetch_throttled(
-            _CONFIG_READS, self._config_interval, configs, first_run
-        )
-        await self._fetch_throttled(
-            _SLOW_READS, _SLOW_READ_INTERVAL.total_seconds(), configs, first_run
-        )
-        return configs
-
-    async def _fetch_one(
-        self,
-        key: str,
-        service: str,
-        method: str,
-        configs: dict[str, Any],
-        first_run: bool,
-    ) -> None:
-        """Fetch a single read into ``configs`` (every cycle), handling support."""
-        if not first_run and not self._supported.get(key):
-            return
-        try:
-            result = await self.client.call(service, method)
-        except (GlinetConnectionError, GlinetAuthError):
-            raise
-        except GlinetApiError as err:
-            if first_run:
-                _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
-            self._supported[key] = False
-            return
-        self._supported[key] = True
-        if isinstance(result, dict):
-            configs[key] = result
-
-    async def _fetch_throttled(
-        self,
-        reads: tuple[tuple[str, str, str], ...],
-        interval: float,
-        configs: dict[str, Any],
-        first_run: bool,
-    ) -> None:
-        """Refresh throttled reads at most every ``interval`` s; reuse cache otherwise.
-
-        ``invalidate(key)`` drops the key's timestamp so it re-fetches next cycle.
-        """
         now = self.hass.loop.time()
-        for key, service, method in reads:
-            if not first_run and not self._supported.get(key):
-                continue
-            due = (key not in self._slow_last) or (now - self._slow_last[key] >= interval)
-            if due:
+        sem = asyncio.Semaphore(_READ_CONCURRENCY)
+        jobs: list[tuple[str, str, str, bool]] = []  # key, service, method, throttled
+        for reads, interval in (
+            (_FAST_READS, None),
+            (_CONFIG_READS, self._config_interval),
+            (_SLOW_READS, _SLOW_READ_INTERVAL.total_seconds()),
+        ):
+            for key, service, method in reads:
+                if not first_run and not self._supported.get(key):
+                    continue
+                if interval is not None:
+                    last = self._slow_last.get(key)
+                    if last is not None and now - last < interval:
+                        continue
+                jobs.append((key, service, method, interval is not None))
+
+        async def _run(key: str, service: str, method: str, throttled: bool) -> None:
+            async with sem:
                 try:
                     result = await self.client.call(service, method)
                 except (GlinetConnectionError, GlinetAuthError):
@@ -257,11 +266,30 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except GlinetApiError as err:
                     if first_run:
                         _LOGGER.debug("Read %s.%s unsupported: %s", service, method, err)
-                    self._supported[key] = False
-                    continue
-                self._supported[key] = True
+                        self._supported[key] = False
+                    else:
+                        _LOGGER.debug("Read %s.%s failed (kept cache): %s", service, method, err)
+                    return
+            self._supported[key] = True
+            if throttled:
                 self._slow_last[key] = now
-                if isinstance(result, dict):
-                    self._slow_cache[key] = result
-            if key in self._slow_cache:
-                configs[key] = self._slow_cache[key]
+            if isinstance(result, dict):
+                self._slow_cache[key] = result
+
+        results = await asyncio.gather(
+            *(_run(*job) for job in jobs), return_exceptions=True
+        )
+        for res in results:
+            if isinstance(res, BaseException):
+                raise res
+
+        return {
+            key: self._slow_cache[key]
+            for key in self._slow_cache
+            if self._supported.get(key)
+        }
+
+
+type GlinetConfigEntry = ConfigEntry[GlinetDataUpdateCoordinator]
+# Name used in the cross-agent contract.
+GlinetCoordinator = GlinetDataUpdateCoordinator

@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .api import normalize_host_url
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import GlinetDataUpdateCoordinator
 
@@ -47,7 +48,7 @@ class GlinetEntity(CoordinatorEntity[GlinetDataUpdateCoordinator]):
             manufacturer=MANUFACTURER,
             model=model,
             sw_version=_first(info, "firmware_version", "version"),
-            configuration_url=f"http://{entry.data['host']}",
+            configuration_url=normalize_host_url(entry.data["host"]),
         )
 
     @property

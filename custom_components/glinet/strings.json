@@ -9,6 +9,15 @@
           "password": "Admin password"
         }
       },
+      "reconfigure": {
+        "title": "Reconfigure GL.iNet router",
+        "description": "Update the router's address and credentials.",
+        "data": {
+          "host": "Host",
+          "username": "Username",
+          "password": "Admin password"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate",
         "description": "Enter the router's admin password again.",
@@ -24,7 +33,9 @@
     },
     "abort": {
       "already_configured": "This router is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful.",
+      "unique_id_mismatch": "This is a different router than the one configured."
     }
   },
   "options": {
@@ -41,6 +52,26 @@
           "config_scan_interval": "How often to re-read rarely-changing config (Wi-Fi, mode, LED, Tor). Edits made from Home Assistant still refresh immediately."
         }
       }
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Device {device_id} was not found."
+    },
+    "not_glinet_device": {
+      "message": "Device {device_id} is not a GL.iNet router."
+    },
+    "entry_not_loaded": {
+      "message": "The GL.iNet router for this device is not loaded."
+    },
+    "confirm_required": {
+      "message": "Refusing to change operating mode without confirm: true (switching mode is disruptive and can change the router's IP)."
+    },
+    "wifi_iface_not_found": {
+      "message": "Wi-Fi interface {iface_name} was not found."
+    },
+    "request_failed": {
+      "message": "The router rejected the request: {error}"
     }
   }
 }

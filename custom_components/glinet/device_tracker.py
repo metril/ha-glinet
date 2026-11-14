@@ -7,26 +7,27 @@ from typing import Any
 from homeassistant.components.device_tracker import ScannerEntity, SourceType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import parsers
-from .const import CONF_ENABLE_DEVICE_TRACKER, DOMAIN
-from .coordinator import GlinetDataUpdateCoordinator
+from .const import CONF_ENABLE_DEVICE_TRACKER
+from .coordinator import GlinetConfigEntry, GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
+
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet client device trackers, adding new clients as they appear."""
     if not entry.options.get(CONF_ENABLE_DEVICE_TRACKER, True):
         return
 
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     tracked: set[str] = set()
 
     @callback
@@ -63,10 +64,7 @@ class GlinetDeviceTracker(GlinetEntity, ScannerEntity):
         self._attr_device_info = None
 
     def _client(self) -> dict[str, Any] | None:
-        for client in (self.coordinator.data or {}).get("clients", []):
-            if parsers.client_mac(client) == self._mac:
-                return client
-        return None
+        return self.coordinator.clients_by_mac.get(self._mac)
 
     @property
     def name(self) -> str | None:

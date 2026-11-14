@@ -9,11 +9,11 @@ from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import parsers
-from .const import DOMAIN, SVC_UPGRADE
-from .coordinator import GlinetDataUpdateCoordinator
+from .const import SVC_UPGRADE
+from .coordinator import GlinetConfigEntry, GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,15 +24,16 @@ _LOGGER = logging.getLogger(__name__)
 _INSTALL_METHOD = "upgrade_online"
 
 
+PARALLEL_UPDATES = 1
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the GL.iNet firmware update entity."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     async_add_entities([GlinetFirmwareUpdate(coordinator, entry)])
 
 

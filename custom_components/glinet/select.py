@@ -19,28 +19,29 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import parsers
 from .api import GlinetError
-from .const import DOMAIN, SVC_REPEATER, SVC_VPN_CLIENT
-from .coordinator import GlinetDataUpdateCoordinator
+from .const import SVC_REPEATER, SVC_VPN_CLIENT
+from .coordinator import GlinetConfigEntry, GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
 
 
+PARALLEL_UPDATES = 1
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet selects for whatever the router exposes."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     configs = (coordinator.data or {}).get("configs", {})
     entities: list[SelectEntity] = []
     if "vpn_client" in configs:
@@ -64,14 +65,24 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
         """Initialize the VPN client selector."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_vpn_client_select"
+        self._labels: dict[str, Any] = {}
+        self._refresh_maps()
 
     def _vpn_config(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("vpn_client")
 
+    def _refresh_maps(self) -> None:
+        """Recompute the label map once per coordinator update."""
+        self._labels = parsers.vpn_client_option_map(self._vpn_config())
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_maps()
+        super()._handle_coordinator_update()
+
     def _target_tunnel(self) -> Any:
         """Resolve the effective target: stored target, else active, else first."""
-        labels = parsers.vpn_client_option_map(self._vpn_config())
-        valid_ids = set(labels.values())
+        valid_ids = set(self._labels.values())
         if self.coordinator.vpn_target in valid_ids:
             return self.coordinator.vpn_target
         active = parsers.vpn_client_active_tunnel(self._vpn_config())
@@ -82,21 +93,20 @@ class GlinetVpnClientSelect(GlinetEntity, SelectEntity):
     @property
     def options(self) -> list[str]:
         """Return one option per configured VPN profile."""
-        return list(parsers.vpn_client_option_map(self._vpn_config()).keys())
+        return list(self._labels)
 
     @property
     def current_option(self) -> str | None:
         """Return the active profile's label, else the targeted profile's label."""
         target = self._target_tunnel()
-        for label, tunnel_id in parsers.vpn_client_option_map(self._vpn_config()).items():
+        for label, tunnel_id in self._labels.items():
             if tunnel_id == target:
                 return label
         return None
 
     async def async_select_option(self, option: str) -> None:
         """Set the target profile; switch over immediately if a VPN is active."""
-        labels = parsers.vpn_client_option_map(self._vpn_config())
-        target = labels.get(option)
+        target = self._labels.get(option)
         if target is None:
             raise HomeAssistantError(f"Unknown VPN profile: {option}")
         self.coordinator.vpn_target = target
@@ -142,10 +152,21 @@ class GlinetRepeaterNetworkSelect(GlinetEntity, SelectEntity):
         """Initialize the repeater-network selector."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_repeater_network"
+        self._saved: dict[str, dict[str, Any]] = {}
+        self._refresh_maps()
+
+    def _refresh_maps(self) -> None:
+        """Recompute the saved-network label map once per coordinator update."""
+        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
+        self._saved = parsers.repeater_saved_option_map(cfg)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_maps()
+        super()._handle_coordinator_update()
 
     def _label_map(self) -> dict[str, dict[str, Any]]:
-        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
-        return parsers.repeater_saved_option_map(cfg)
+        return self._saved
 
     @property
     def options(self) -> list[str]:

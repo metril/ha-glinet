@@ -21,12 +21,11 @@ from homeassistant.components.switch import SwitchEntity, SwitchEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import parsers
 from .api import GlinetError
 from .const import (
-    DOMAIN,
     SVC_LED,
     SVC_OVPN_SERVER,
     SVC_REPEATER,
@@ -36,7 +35,7 @@ from .const import (
     SVC_WG_SERVER,
     SVC_WIFI,
 )
-from .coordinator import GlinetDataUpdateCoordinator
+from .coordinator import GlinetConfigEntry, GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,15 +108,16 @@ SWITCHES: tuple[GlinetSwitchDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 1
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet switches for the features this router actually exposes."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     configs = (coordinator.data or {}).get("configs", {})
     entities: list[SwitchEntity] = [
         GlinetSwitch(coordinator, entry, desc)
@@ -254,14 +254,24 @@ class GlinetVpnSwitch(GlinetEntity, SwitchEntity):
         """Initialize the single VPN on/off switch."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_vpn_client"
+        self._labels: dict[str, Any] = {}
+        self._refresh_maps()
 
     def _vpn_config(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("vpn_client")
 
+    def _refresh_maps(self) -> None:
+        """Recompute the label map once per coordinator update."""
+        self._labels = parsers.vpn_client_option_map(self._vpn_config())
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_maps()
+        super()._handle_coordinator_update()
+
     def _target_tunnel(self) -> Any:
         """Resolve the target tunnel: stored target, else active, else first."""
-        labels = parsers.vpn_client_option_map(self._vpn_config())
-        valid_ids = set(labels.values())
+        valid_ids = set(self._labels.values())
         if self.coordinator.vpn_target in valid_ids:
             return self.coordinator.vpn_target
         active = parsers.vpn_client_active_tunnel(self._vpn_config())
@@ -332,12 +342,23 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
         """Initialize the repeater on/off switch."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_repeater"
+        self._saved: dict[str, dict[str, Any]] = {}
+        self._refresh_maps()
+
+    def _refresh_maps(self) -> None:
+        """Recompute the saved-network label map once per coordinator update."""
+        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
+        self._saved = parsers.repeater_saved_option_map(cfg)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_maps()
+        super()._handle_coordinator_update()
 
     def _label_map(self) -> dict[str, dict[str, Any]]:
-        cfg = (self.coordinator.data or {}).get("configs", {}).get("repeater_saved")
-        return parsers.repeater_saved_option_map(cfg)
+        return self._saved
 
-    def _status(self) -> dict[str, Any] | None:
+    def _repeater_status(self) -> dict[str, Any] | None:
         return (self.coordinator.data or {}).get("configs", {}).get("repeater")
 
     def _target_entry(self) -> dict[str, Any] | None:
@@ -347,8 +368,8 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
         if target in labels:
             return labels[target]
         # Fall back to the currently-connected network (match by SSID), if saved.
-        if parsers.repeater_connected(self._status()):
-            ssid = parsers.repeater_upstream_ssid(self._status())
+        if parsers.repeater_connected(self._repeater_status()):
+            ssid = parsers.repeater_upstream_ssid(self._repeater_status())
             for entry in labels.values():
                 if entry.get("ssid") == ssid:
                     return entry
@@ -357,7 +378,7 @@ class GlinetRepeaterSwitch(GlinetEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return whether the repeater is connected to an upstream network."""
-        return parsers.repeater_connected(self._status())
+        return parsers.repeater_connected(self._repeater_status())
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Connect the repeater to the target saved network."""
@@ -432,5 +453,4 @@ class GlinetWifiSwitch(GlinetEntity, SwitchEntity):
             raise HomeAssistantError(
                 f"Failed to set Wi-Fi {self._iface_name}: {err}"
             ) from err
-        self.coordinator.invalidate("wifi_config")
         await self.coordinator.async_request_refresh()

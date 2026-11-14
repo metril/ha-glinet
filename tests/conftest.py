@@ -61,12 +61,21 @@ def _stub_homeassistant() -> None:
     _T = TypeVar("_T")
 
     ha = _mod("homeassistant")
+    ha.__path__ = []
     ha._glinet_stub = True
 
     class _SupportsResponse:
         NONE = "none"
         ONLY = "only"
         OPTIONAL = "optional"
+
+    class _ConfigEntry(Generic[_T]):
+        """Subscriptable stand-in (``ConfigEntry[Coordinator]``)."""
+
+        def __init__(self, *a, **k):
+            self.options = k.get("options", {})
+            self.title = k.get("title", "router")
+            self.entry_id = k.get("entry_id", "eid")
 
     ha_core = _mod(
         "homeassistant.core",
@@ -78,10 +87,11 @@ def _stub_homeassistant() -> None:
     )
     ha_ce = _mod(
         "homeassistant.config_entries",
-        ConfigEntry=MagicMock,
+        ConfigEntry=_ConfigEntry,
         ConfigFlow=object,
         ConfigFlowResult=dict,
         OptionsFlow=object,
+        OptionsFlowWithReload=object,
     )
 
     class _Platform:
@@ -95,18 +105,29 @@ def _stub_homeassistant() -> None:
         UPDATE = "update"
 
     ha_const = _mod("homeassistant.const", Platform=_Platform)
+
+    def _const_getattr(name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return name.lower() if name.startswith("CONF_") else MagicMock()
+
+    ha_const.__getattr__ = _const_getattr
     ha_exc = _mod(
         "homeassistant.exceptions",
         HomeAssistantError=type("HomeAssistantError", (Exception,), {}),
         ConfigEntryNotReady=type("ConfigEntryNotReady", (Exception,), {}),
+        ServiceValidationError=type("ServiceValidationError", (Exception,), {}),
         ConfigEntryAuthFailed=type("ConfigEntryAuthFailed", (Exception,), {}),
         UpdateFailed=type("UpdateFailed", (Exception,), {}),
     )
 
     ha_helpers = _mod("homeassistant.helpers")
+    ha_helpers.__path__ = []
 
     class _DUC(Generic[_T]):
         def __init__(self, hass=None, logger=None, *, name="", update_interval=None, **k):
+            self.hass = hass
+            self.config_entry = k.get("config_entry")
             self.data = None
 
         def __init_subclass__(cls, **k):
@@ -160,9 +181,46 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
     }
+    def _lenient(name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return MagicMock()
+
     for name, module in modules.items():
+        if not hasattr(module, "__getattr__"):
+            module.__getattr__ = _lenient
         sys.modules.setdefault(name, module)
+
+
+def _install_fallback_finder() -> None:
+    """Auto-stub any other ``homeassistant.*`` submodule the package imports."""
+    import importlib.abc
+    import importlib.machinery
+
+    class _Loader(importlib.abc.Loader):
+        def create_module(self, spec):
+            module = types.ModuleType(spec.name)
+            module.__path__ = []
+            module.__getattr__ = lambda name: (
+                (_ for _ in ()).throw(AttributeError(name))
+                if name.startswith("__")
+                else MagicMock()
+            )
+            return module
+
+        def exec_module(self, module):
+            return None
+
+    class _GlinetStubFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname.startswith("homeassistant."):
+                return importlib.machinery.ModuleSpec(fullname, _Loader())
+            return None
+
+    if not any(type(f).__name__ == "_GlinetStubFinder" for f in sys.meta_path):
+        sys.meta_path.append(_GlinetStubFinder())
 
 
 _stub_voluptuous()
 _stub_homeassistant()
+_install_fallback_finder()

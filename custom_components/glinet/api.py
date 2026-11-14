@@ -34,7 +34,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # JSON-RPC error codes the router returns for an expired/invalid session.
 _ACCESS_DENIED_CODES = {-32000, -32002}
-_ACCESS_DENIED_TEXT = ("access denied", "no permission", "invalid session", "login")
+
+
+def normalize_host_url(host: str) -> str:
+    """Return a base URL (scheme + host, no trailing slash) for a user-entered host."""
+    host = host.strip().rstrip("/")
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host
 
 
 class GlinetError(Exception):
@@ -66,7 +73,7 @@ class GlinetApiClient:
     ) -> None:
         """Initialize the client."""
         self._session = session
-        self._host = host.strip().rstrip("/")
+        self._host = normalize_host_url(host)
         self._username = username
         self._password = password
         self._http_timeout = http_timeout
@@ -77,10 +84,7 @@ class GlinetApiClient:
     @property
     def _url(self) -> str:
         """Return the JSON-RPC endpoint URL."""
-        host = self._host
-        if not host.startswith(("http://", "https://")):
-            host = f"http://{host}"
-        return f"{host}/rpc"
+        return f"{self._host}/rpc"
 
     def _next_id(self) -> int:
         self._rpc_id += 1
@@ -103,19 +107,23 @@ class GlinetApiClient:
                 if resp.status != 200:
                     raise GlinetApiError(f"HTTP {resp.status} from router")
                 data = await resp.json(content_type=None)
+        except (ValueError, aiohttp.ContentTypeError) as err:
+            raise GlinetConnectionError(f"Invalid (non-JSON) response from router: {err}") from err
         except aiohttp.ClientError as err:
             raise GlinetConnectionError(f"Failed to reach router: {err}") from err
         except asyncio.TimeoutError as err:
             raise GlinetConnectionError("Timed out talking to router") from err
 
-        if "error" in data and data["error"] is not None:
+        if not isinstance(data, dict):
+            raise GlinetApiError("Unexpected response format from router")
+
+        if data.get("error") is not None:
             err = data["error"]
+            if not isinstance(err, dict):
+                raise GlinetApiError(f"RPC error: {err}")
             code = err.get("code")
-            message = str(err.get("message", "")).lower()
-            if code in _ACCESS_DENIED_CODES or any(
-                t in message for t in _ACCESS_DENIED_TEXT
-            ):
-                raise GlinetAuthError(err.get("message", "Access denied"))
+            if code in _ACCESS_DENIED_CODES:
+                raise GlinetAuthError(err.get("message") or "Access denied")
             raise GlinetApiError(f"RPC error {code}: {err.get('message')}")
 
         return data.get("result")
@@ -171,16 +179,19 @@ class GlinetApiClient:
         if self._sid is None:
             await self.async_login()
 
+        sid = self._sid
         try:
             return await self._rpc(
-                "call", [self._sid, service, method, params or {}], timeout
+                "call", [sid, service, method, params or {}], timeout
             )
         except GlinetAuthError:
-            # Session likely expired — re-authenticate once and retry.
+            # Session likely expired — re-authenticate once and retry. Concurrent
+            # callers that failed with the same sid share a single re-login.
             _LOGGER.debug("Session expired, re-authenticating")
             async with self._auth_lock:
-                self._sid = None
-                await self._login()
+                if self._sid is None or self._sid == sid:
+                    self._sid = None
+                    await self._login()
             return await self._rpc(
                 "call", [self._sid, service, method, params or {}], timeout
             )

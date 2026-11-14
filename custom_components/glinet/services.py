@@ -7,17 +7,18 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from . import parsers
-from .api import GlinetApiClient, GlinetError
+from .api import GlinetError
 from .const import (
     DOMAIN,
     SVC_CLIENTS,
@@ -25,6 +26,7 @@ from .const import (
     SVC_REPEATER,
     SVC_WIFI,
 )
+from .coordinator import GlinetDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,25 +86,49 @@ SET_WIFI_SCHEMA = vol.Schema(
 )
 
 
-def _client_for_device(hass: HomeAssistant, device_id: str) -> GlinetApiClient:
-    """Resolve a device_id to its GL.iNet API client."""
+def _coordinator_for_device(
+    hass: HomeAssistant, device_id: str
+) -> GlinetDataUpdateCoordinator:
+    """Resolve a device_id to its loaded config entry's coordinator."""
     device = dr.async_get(hass).async_get(device_id)
     if device is None:
-        raise HomeAssistantError(f"Unknown device: {device_id}")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="device_not_found",
+            translation_placeholders={"device_id": device_id},
+        )
     for identifier in device.identifiers:
-        if identifier[0] == DOMAIN:
-            entry_id = identifier[1]
-            data = hass.data.get(DOMAIN, {}).get(entry_id)
-            if data:
-                return data["client"]
-    raise HomeAssistantError(f"Device {device_id} is not a GL.iNet router")
+        if identifier[0] != DOMAIN:
+            continue
+        entry = hass.config_entries.async_get_entry(identifier[1])
+        if entry is None or entry.domain != DOMAIN:
+            continue
+        if entry.state is not ConfigEntryState.LOADED:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="entry_not_loaded"
+            )
+        return entry.runtime_data
+    raise ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="not_glinet_device",
+        translation_placeholders={"device_id": device_id},
+    )
+
+
+def _request_failed(err: GlinetError) -> HomeAssistantError:
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="request_failed",
+        translation_placeholders={"error": str(err)},
+    )
 
 
 def async_register_services(hass: HomeAssistant) -> None:
     """Register GL.iNet services once per Home Assistant instance."""
 
     async def _handle_block_client(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         try:
             await client.call(
                 SVC_CLIENTS,
@@ -110,10 +136,12 @@ def async_register_services(hass: HomeAssistant) -> None:
                 {"mac": call.data["mac"], "block": call.data["blocked"]},
             )
         except GlinetError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise _request_failed(err) from err
+        await coordinator.async_request_refresh()
 
     async def _handle_connect_repeater(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         params: dict[str, Any] = {"ssid": call.data["ssid"], "remember": True}
         if call.data.get("password"):
             params["key"] = call.data["password"]
@@ -124,31 +152,37 @@ def async_register_services(hass: HomeAssistant) -> None:
         try:
             await client.call(SVC_REPEATER, "connect", params)
         except GlinetError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise _request_failed(err) from err
+        coordinator.invalidate("repeater_saved")
+        await coordinator.async_request_refresh()
 
     async def _handle_set_mode(call: ServiceCall) -> None:
         if not call.data.get("confirm"):
-            raise HomeAssistantError(
-                "Refusing to change operating mode without confirm: true "
-                "(switching mode is disruptive and can change the router's IP)."
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="confirm_required"
             )
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         try:
             await client.call(SVC_NETMODE, "set_mode", {"mode": call.data["mode"]})
         except GlinetError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise _request_failed(err) from err
+        coordinator.invalidate("netmode")
+        await coordinator.async_request_refresh()
 
     async def _handle_scan_repeater(call: ServiceCall) -> ServiceResponse:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         try:
             # Scanning all bands can take tens of seconds — use a generous timeout.
             result = await client.call(SVC_REPEATER, "scan", timeout=60)
         except GlinetError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise _request_failed(err) from err
         return {"networks": parsers.repeater_scan_networks(result)}
 
     async def _handle_set_wifi(call: ServiceCall) -> None:
-        client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
+        coordinator = _coordinator_for_device(hass, call.data[ATTR_DEVICE_ID])
+        client = coordinator.client
         iface_name = call.data["iface_name"]
         overrides = {
             k: call.data[k]
@@ -164,12 +198,17 @@ def async_register_services(hass: HomeAssistant) -> None:
                 config = await client.call(SVC_WIFI, "get_config")
                 params = parsers.wifi_set_payload(config, iface_name, **overrides)
                 if params is None:
-                    raise HomeAssistantError(f"Wi-Fi iface {iface_name} not found")
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN,
+                        translation_key="wifi_iface_not_found",
+                        translation_placeholders={"iface_name": iface_name},
+                    )
                 if "enabled" in overrides:
                     params["enabled"] = overrides["enabled"]
             await client.call(SVC_WIFI, "set_config", params)
         except GlinetError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise _request_failed(err) from err
+        await coordinator.async_request_refresh()
 
     if not hass.services.has_service(DOMAIN, SERVICE_BLOCK_CLIENT):
         hass.services.async_register(
@@ -198,16 +237,3 @@ def async_register_services(hass: HomeAssistant) -> None:
         hass.services.async_register(
             DOMAIN, SERVICE_SET_WIFI, _handle_set_wifi, schema=SET_WIFI_SCHEMA
         )
-
-
-def async_unregister_services(hass: HomeAssistant) -> None:
-    """Remove GL.iNet services when the last entry is unloaded."""
-    for service in (
-        SERVICE_BLOCK_CLIENT,
-        SERVICE_CONNECT_REPEATER,
-        SERVICE_SCAN_REPEATER,
-        SERVICE_SET_MODE,
-        SERVICE_SET_WIFI,
-    ):
-        if hass.services.has_service(DOMAIN, service):
-            hass.services.async_remove(DOMAIN, service)

@@ -23,6 +23,13 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
 - `parsers.py` — **all field extraction lives here**, each via candidate dotted
   paths with fallbacks. This is the one place to adjust if a field path differs on
   a given router/firmware.
+- **v0.8.0 (HA ≥2026.3, Python 3.14):** coordinator lives in `entry.runtime_data`
+  (`GlinetConfigEntry`); services registered once in `async_setup`; options use
+  `OptionsFlowWithReload`; `async_step_reconfigure` for host changes. Reads run
+  concurrently (`gather` + `Semaphore(3)`). A read is marked **unsupported only on the
+  first refresh**; later API errors keep the cached value. Auth errors are classified by
+  RPC code only; non-JSON responses are connection errors. Uptime is a boot-time
+  TIMESTAMP sensor (moves only on >60s drift).
 - Platforms: `sensor`, `binary_sensor`, `select` (VPN chooser, repeater network),
   `switch`, `button`, `device_tracker`, `update`. **Design principle (v0.5.0): simple
   frequent actions are entities; complex/rare config is services.** Services in
@@ -203,6 +210,6 @@ MIT. Clean-room — do NOT copy GPL code from python-glinet / gli-py or vendor t
 
 ## Tests
 
-`pytest -q` — no Home Assistant install required for `test_crypt.py` /
+`pytest -n auto -q` (Python 3.14; deps in `requirements_test.txt`; CI shards 4-way via pytest-split with a single `tests` aggregator check) — no Home Assistant install required for `test_crypt.py` /
 `test_api.py` / `test_parsers.py` (HA is stubbed where needed, following the
 ha-awtrix test pattern).

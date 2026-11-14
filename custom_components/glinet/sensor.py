@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,14 +18,13 @@ from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
     UnitOfTemperature,
-    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import parsers
-from .const import DOMAIN
-from .coordinator import GlinetDataUpdateCoordinator
+from .coordinator import GlinetConfigEntry, GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
 
 
@@ -43,9 +43,7 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
     GlinetSensorDescription(
         key="uptime",
         name="Uptime",
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:timer-outline",
         value_fn=lambda data: parsers.uptime(data.get("status", {})),
@@ -172,15 +170,16 @@ SENSORS: tuple[GlinetSensorDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: GlinetConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up GL.iNet sensors."""
-    coordinator: GlinetDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator = entry.runtime_data
     data = coordinator.data or {}
     configs = data.get("configs", {})
 
@@ -211,10 +210,23 @@ class GlinetSensor(GlinetEntity, SensorEntity):
         super().__init__(coordinator, entry)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._boot_time: datetime | None = None
 
     @property
     def native_value(self) -> Any:
         """Return the sensor value."""
         if self.coordinator.data is None:
             return None
-        return self.entity_description.value_fn(self.coordinator.data)
+        value = self.entity_description.value_fn(self.coordinator.data)
+        if self.entity_description.device_class is SensorDeviceClass.TIMESTAMP:
+            return self._boot_timestamp(value)
+        return value
+
+    def _boot_timestamp(self, uptime_s: Any) -> datetime | None:
+        """Boot time = now - uptime, only moved when it shifts by more than 60 s."""
+        if uptime_s is None:
+            return self._boot_time
+        boot = dt_util.utcnow() - timedelta(seconds=uptime_s)
+        if self._boot_time is None or abs(boot - self._boot_time) > timedelta(seconds=60):
+            self._boot_time = boot
+        return self._boot_time

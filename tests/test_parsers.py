@@ -398,3 +398,11 @@ def test_wifi_band_and_guest():
     assert parsers.guest_wifi_up(status) is True
     assert parsers.wifi_band_up({}, "2G", False) is None
     assert parsers.guest_wifi_up({"wifi": [{"band": "2G", "guest": False, "up": True}]}) is None
+
+
+def test_client_count_online_semantics():
+    # some have `online` -> count only online (even if zero)
+    assert parsers.client_count({"clients": [{"mac": "a", "online": False}]}) == 0
+    assert parsers.client_count({"clients": [{"mac": "a", "online": True}, {"mac": "b", "online": False}]}) == 1
+    # none have `online` -> fall back to all clients
+    assert parsers.client_count({"clients": [{"mac": "a"}, {"mac": "b"}]}) == 2

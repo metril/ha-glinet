@@ -16,6 +16,7 @@ from custom_components.glinet.api import (
     GlinetApiClient,
     GlinetApiError,
     GlinetAuthError,
+    GlinetConnectionError,
 )
 from custom_components.glinet.crypt_util import crypt_password
 
@@ -32,6 +33,8 @@ class _FakeResp:
         return False
 
     async def json(self, content_type=None):
+        if isinstance(self._body, Exception):
+            raise self._body
         return self._body
 
 
@@ -155,3 +158,67 @@ async def test_get_clients_unwraps_list():
     client = GlinetApiClient(session, "host", "pw")
     clients = await client.get_clients()
     assert clients == [{"mac": "aa", "online": True}]
+
+
+@pytest.mark.asyncio
+async def test_login_text_with_non_auth_code_is_api_error():
+    session = _FakeSession(
+        [
+            _challenge_body(),
+            _login_body(),
+            {"error": {"code": -32603, "message": "login module failed"}},
+        ]
+    )
+    client = GlinetApiClient(session, "host", "pw")
+    with pytest.raises(GlinetApiError) as exc:
+        await client.call("system", "get_status")
+    assert not isinstance(exc.value, GlinetAuthError)
+
+
+@pytest.mark.asyncio
+async def test_non_json_body_raises_connection_error():
+    session = _FakeSession([ValueError("not json")])
+    client = GlinetApiClient(session, "host", "pw")
+    with pytest.raises(GlinetConnectionError):
+        await client.async_login()
+
+
+@pytest.mark.asyncio
+async def test_non_dict_body_and_string_error_raise_api_error():
+    client = GlinetApiClient(_FakeSession([["x"]]), "host", "pw")
+    with pytest.raises(GlinetApiError):
+        await client.async_login()
+    client = GlinetApiClient(_FakeSession([{"error": "boom"}]), "host", "pw")
+    with pytest.raises(GlinetApiError):
+        await client.async_login()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_expired_calls_login_once():
+    import asyncio
+
+    class _Session:
+        def __init__(self):
+            self.logins = 0
+            self.requests = []
+
+        def post(self, url, json, timeout=None):
+            self.requests.append(json)
+            m = json["method"]
+            if m == "challenge":
+                body = _challenge_body()
+            elif m == "login":
+                self.logins += 1
+                body = _login_body(f"S{self.logins}")
+            elif json["params"][0] == "S2":
+                body = {"result": "ok"}
+            else:
+                body = {"error": {"code": -32000, "message": "Access denied"}}
+            return _FakeResp(200, body)
+
+    session = _Session()
+    client = GlinetApiClient(session, "host", "pw")
+    await client.async_login()  # S1, which the router now rejects
+    results = await asyncio.gather(*(client.call("system", "get_status") for _ in range(3)))
+    assert results == ["ok"] * 3
+    assert session.logins == 2  # initial + exactly one re-login

@@ -793,3 +793,22 @@ def modem_signal(config: dict[str, Any] | None) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def firmware_upgrade_progress(resp: Any) -> tuple[int | None, int | None]:
+    """Parse ``upgrade.get_online_upgrade_status`` into (status, percent 0-100)."""
+    if not isinstance(resp, dict):
+        return None, None
+
+    def _int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    percent = _int(resp.get("percent"))
+    if percent is not None:
+        percent = max(0, min(100, percent))
+    return _int(resp.get("status")), percent

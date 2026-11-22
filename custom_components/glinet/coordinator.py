@@ -161,6 +161,11 @@ class GlinetDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for key in keys:
             self._slow_last.pop(key, None)
 
+    def invalidate_info(self) -> None:
+        """Force the next refresh to re-fetch ``system.get_info`` (e.g. after a flash)."""
+        if self._info_last is not None:
+            self._info_last = float("-inf")
+
     @property
     def info(self) -> dict[str, Any]:
         """Return cached device info (model/firmware/mac)."""

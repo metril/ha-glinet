@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +20,7 @@ from .api import GlinetError
 from .const import SVC_UPGRADE
 from .coordinator import GlinetDataUpdateCoordinator
 from .entity import GlinetEntity
+from .upgrade_watch import BACK, FAILED, REBOOTING, wait_for_return, watch_upgrade
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +49,9 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
     _attr_translation_key = "firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
     _attr_title = "GL.iNet firmware"
-    _attr_supported_features = UpdateEntityFeature.INSTALL
+    _attr_supported_features = (
+        UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+    )
 
     def __init__(
         self,
@@ -57,6 +61,19 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
         """Initialize the firmware update entity."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_firmware"
+        self._installing = False
+        self._watch_task: asyncio.Task | None = None
+
+    @property
+    def in_progress(self) -> bool:
+        """Installing (own flag: HA resets ``_attr_in_progress`` when install returns)."""
+        return self._installing
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel the progress watcher."""
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+            self._watch_task = None
 
     def _firmware(self) -> dict | None:
         return (self.coordinator.data or {}).get("configs", {}).get("firmware")
@@ -96,6 +113,8 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
         self, version: str | None, backup: bool, **kwargs: Any
     ) -> None:
         """Start the online firmware upgrade (keeps settings, reboots the router)."""
+        if self._installing:
+            raise HomeAssistantError("A firmware upgrade is already in progress")
         if not parsers.firmware_update_available(self._firmware()):
             raise HomeAssistantError("Firmware is already up to date")
 
@@ -104,6 +123,10 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
             "image and reboot to flash it — the integration will be unavailable for "
             "a few minutes"
         )
+        # Mark in progress before the (slow) start call so a second press is refused.
+        self._installing = True
+        self._attr_update_percentage = None
+        self.async_write_ha_state()
         try:
             # keep_package mirrors keep_config exactly, as the UI does. Generous
             # timeout: the call kicks off the download before returning.
@@ -114,5 +137,44 @@ class GlinetFirmwareUpdate(GlinetEntity, UpdateEntity):
                 timeout=120,
             )
         except GlinetError as err:
+            self._installing = False
+            self.async_write_ha_state()
             raise HomeAssistantError(f"Failed to start firmware upgrade: {err}") from err
-        # Do not poll progress: the router reboots to flash and drops the link.
+        self._watch_task = self.coordinator.config_entry.async_create_background_task(
+            self.hass, self._async_watch(), f"{self.entity_id} upgrade progress"
+        )
+
+    def _on_progress(self, percent: int | None) -> None:
+        if percent is not None:
+            self._attr_update_percentage = percent
+            self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Stay available (showing "installing") while the router flashes/reboots."""
+        return self._installing or super().available
+
+    async def _async_watch(self) -> None:
+        """Track progress, wait for the router to return, then refresh state."""
+        try:
+            outcome = await watch_upgrade(self.coordinator.client, self._on_progress)
+            if outcome == REBOOTING:
+                self._attr_update_percentage = None
+                self.async_write_ha_state()
+                if await wait_for_return(self.coordinator.client) != BACK:
+                    _LOGGER.warning("Router did not come back after the firmware upgrade")
+            elif outcome == FAILED:
+                _LOGGER.warning("Firmware upgrade ended without the router rebooting")
+            else:
+                _LOGGER.warning("Firmware upgrade progress tracking timed out")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # never leave the entity stuck "installing"
+            _LOGGER.exception("Firmware upgrade progress tracking failed")
+        self._watch_task = None
+        self._installing = False
+        self._attr_update_percentage = None
+        self.coordinator.invalidate("firmware")
+        self.coordinator.invalidate_info()
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()

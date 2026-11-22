@@ -208,3 +208,15 @@ async def test_info_refresh_failure_backs_off_and_updates_registry():
     now[0] += 6 * 3600 + 1
     await coord._async_update_data()
     registry.async_update_device.assert_called_once_with("dev", sw_version="4.9.0")
+
+
+@pytest.mark.asyncio
+async def test_invalidate_info_refetches_info_next_cycle():
+    coord, client, _ = _make({})
+    await coord._async_update_data()
+    client.info = {"firmware_version": "4.9.0", "mac": "aa:bb:cc:dd:ee:ff"}
+    await coord._async_update_data()
+    assert coord.info["firmware_version"] == "4.8.1"  # throttled (6h)
+    coord.invalidate_info()
+    await coord._async_update_data()
+    assert coord.info["firmware_version"] == "4.9.0"

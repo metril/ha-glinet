@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import timedelta
 from unittest.mock import patch
@@ -13,15 +14,21 @@ if getattr(sys.modules.get("homeassistant"), "_glinet_stub", False):  # pragma: 
     pytest.skip("Home Assistant is stubbed", allow_module_level=True)
 
 from homeassistant.config_entries import SOURCE_RECONFIGURE, ConfigEntryState
-from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
 
-from custom_components.glinet.api import GlinetApiClient, GlinetApiError
+from custom_components.glinet import upgrade_watch
+from custom_components.glinet.api import (
+    GlinetApiClient,
+    GlinetApiError,
+    GlinetConnectionError,
+)
 from custom_components.glinet.const import DOMAIN
 from custom_components.glinet.diagnostics import async_get_config_entry_diagnostics
 
@@ -125,6 +132,8 @@ class Router:
         key = (service, method)
         if key in self.responses:
             result = self.responses[key]
+            if callable(result):
+                result = await result()
             if isinstance(result, Exception):
                 raise result
             return result
@@ -433,3 +442,50 @@ async def test_options_select_mode(hass, entry):
     await hass.async_block_till_done()
     assert entry.options["device_tracker_mode"] == "off"
     assert _trackers(hass, entry) == {}
+
+
+async def test_firmware_install_progress(hass, entry, router, monkeypatch):
+    """Install shows progress, refuses a re-trigger, and clears after the reboot."""
+    monkeypatch.setattr(upgrade_watch, "POLL_INTERVAL", 0)
+    gate = asyncio.Event()
+    seq: list = []
+
+    async def status():
+        await gate.wait()
+        gate.clear()
+        return seq.pop(0)
+
+    router.responses[("upgrade", "get_online_upgrade_status")] = status
+    eid = _by_unique(hass, entry, "update", "firmware")
+
+    async def settle(pred):
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if pred(hass.states.get(eid)):
+                return
+        raise AssertionError(hass.states.get(eid))
+
+    await hass.services.async_call("update", "install", {"entity_id": eid}, blocking=True)
+    assert hass.states.get(eid).attributes["in_progress"] is True
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "update", "install", {"entity_id": eid}, blocking=True
+        )
+    assert len(router.writes("upgrade", "upgrade_online")) == 1
+
+    seq.append({"status": 1, "percent": 40})
+    gate.set()
+    await settle(lambda st: st.attributes.get("update_percentage") == 40)
+
+    # Router reboots; on return the firmware check no longer offers an update.
+    router.responses[("upgrade", "check_firmware_online")] = {
+        "current_version": "4.9.0", "prompt": True,
+    }
+    seq.append(GlinetConnectionError("rebooting"))
+    gate.set()
+    await settle(lambda st: st.attributes.get("in_progress") is False)
+    await hass.async_block_till_done()
+    st = hass.states.get(eid)
+    assert st.state == "off"
+    assert st.attributes["update_percentage"] is None

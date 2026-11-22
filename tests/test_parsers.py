@@ -436,3 +436,14 @@ def test_client_count_all_offline_is_zero():
 
 def test_client_count_no_online_field_counts_all():
     assert parsers.client_count({"clients": [{"mac": "a"}, {"mac": "b"}]}) == 2
+
+
+def test_firmware_upgrade_progress():
+    f = parsers.firmware_upgrade_progress
+    assert f({"status": 1, "percent": 42}) == (1, 42)
+    assert f({"status": "1", "percent": 250}) == (1, 100)
+    assert f({"status": 1, "percent": -5}) == (1, 0)
+    assert f({"status": True, "percent": "x"}) == (None, None)
+    assert f(None) == (None, None)
+    assert f("junk") == (None, None)
+    assert f({}) == (None, None)

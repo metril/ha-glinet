@@ -88,6 +88,21 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   default (property override, since `ScannerEntity` defines it as a property).
 - **v0.9.0 tracker modes:** option `device_tracker_mode` = `off|all|selected` (legacy bool `enable_device_tracker` is read as fallback; none set -> `all`; new entries get `selected`). `selected` uses **config subentries** (`tracked_client`, `TrackedClientSubentryFlow`; data `{mac,name}`, unique_id = MAC); trackers are added with `config_subentry_id`, new subentries are picked up via `SIGNAL_CONFIG_ENTRY_CHANGED` (subentry add/remove does not reload the entry), registry entries without a subentry are pruned on setup; `off` removes them.
 - Tests: `tests/test_coordinator.py` uses the conftest HA stubs (skipped under real HA).
+  `tests/test_integration_ha.py` needs `pytest-homeassistant-custom-component` (not in CI) and
+  `-o pythonpath=.`: `uv pip install pytest-homeassistant-custom-component && uv run pytest -n auto -o pythonpath=.`
+
+## v0.10.0 notes (firmware install progress)
+
+- Update entity has `UpdateEntityFeature.PROGRESS`. `async_install` starts `upgrade_online`,
+  sets `in_progress`, and spawns a background watcher (`upgrade_watch.watch_upgrade`, HA-free)
+  polling `upgrade.get_online_upgrade_status` (`parsers.firmware_upgrade_progress`) every 2 s.
+  Connection/auth error = router flashing/rebooting → `wait_for_return` polls `system.get_info`
+  until it answers again (~15 min cap); the entity stays available + "installing" throughout
+  (`in_progress` is set *before* the slow start call, so double-presses are refused). `in_progress` is an own `_installing` flag behind a property
+  — HA's `async_install_with_progress` resets `_attr_in_progress` when `async_install` returns. A terminal status (2/5/7/9) with the
+  RPC still answering ~60 s = failed; ~15 min cap. A second install while in progress is refused.
+  On finish: `invalidate("firmware")` + `coordinator.invalidate_info()` + refresh, so the offered
+  version/`sw_version` update and Install isn't re-offered stale. Task cancelled on entity removal.
 
 ## Auth flow (firmware 4.x)
 

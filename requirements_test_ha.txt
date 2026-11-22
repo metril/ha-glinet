@@ -1,0 +1,4 @@
+# Real-HA suite (CI job test-ha). The harness pins its own pytest/pytest-asyncio and
+# Home Assistant, so this does NOT include requirements_test.txt.
+pytest-homeassistant-custom-component==0.13.375
+pytest-xdist==3.8.0

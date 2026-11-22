@@ -41,15 +41,31 @@ jobs:
       - run: pip install -r requirements_test.txt
       - run: pytest -q -n auto --splits 4 --group ${{ matrix.group }}
 
+  test-ha:
+    runs-on: ubuntu-latest
+    name: Unit tests (real Home Assistant)
+    # End-to-end tests against a real HA via pytest-homeassistant-custom-component
+    # (the stubbed shards skip them; the stub-only coordinator tests skip here).
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements_test*.txt
+      - run: pip install -r requirements_test_ha.txt
+      - run: pytest -q -n auto tests/test_integration_ha.py
+
   tests:
     runs-on: ubuntu-latest
     name: Unit tests
-    needs: test-shard
+    needs: [test-shard, test-ha]
     if: always()
     steps:
-      - name: Require all shards to pass
+      - name: Require all shards and the real-HA suite to pass
         run: |
           [ "${{ needs.test-shard.result }}" = "success" ] || { echo "Shards: ${{ needs.test-shard.result }}"; exit 1; }
+          [ "${{ needs.test-ha.result }}" = "success" ] || { echo "Real-HA tests: ${{ needs.test-ha.result }}"; exit 1; }
 
   import-smoke:
     runs-on: ubuntu-latest

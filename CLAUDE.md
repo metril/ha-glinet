@@ -88,8 +88,9 @@ Home Assistant custom integration (HACS) for **GL.iNet firmware-4.x routers**
   default (property override, since `ScannerEntity` defines it as a property).
 - **v0.9.0 tracker modes:** option `device_tracker_mode` = `off|all|selected` (legacy bool `enable_device_tracker` is read as fallback; none set -> `all`; new entries get `selected`). `selected` uses **config subentries** (`tracked_client`, `TrackedClientSubentryFlow`; data `{mac,name}`, unique_id = MAC); trackers are added with `config_subentry_id`, new subentries are picked up via `SIGNAL_CONFIG_ENTRY_CHANGED` (subentry add/remove does not reload the entry), registry entries without a subentry are pruned on setup; `off` removes them.
 - Tests: `tests/test_coordinator.py` uses the conftest HA stubs (skipped under real HA).
-  `tests/test_integration_ha.py` needs `pytest-homeassistant-custom-component` (not in CI) and
-  `-o pythonpath=.`: `uv pip install pytest-homeassistant-custom-component && uv run pytest -n auto -o pythonpath=.`
+  `tests/test_integration_ha.py` needs `pytest-homeassistant-custom-component`
+  (`requirements_test_ha.txt`); CI runs it in the `test-ha` job, which the `tests` aggregator
+  requires. Locally: `uv pip install -r requirements_test_ha.txt && uv run pytest -n auto`.
 
 ## v0.10.0 notes (firmware install progress)
 
